@@ -304,7 +304,15 @@ let _socket: Socket | null = null;
 // mentions window says so. Generated OPTIONAL and read as `false` when
 // absent — a pre-41 server never truncated — so `MIN_SERVER_PROTOCOL_VERSION`
 // stays at 9.
-export const CLIENT_PROTOCOL_VERSION = 41;
+//
+// 42 (issue 1911) — `login_throttle_door` gains `oidc_login`, so the Events
+// tab can name the door that tripped. A closed union on the cic side is
+// exactly why a purely additive server-side member still needs the number:
+// against this constant's predecessor the new event would have failed
+// narrowing and been dropped, hiding an attack on the login door.
+// `MIN_SERVER_PROTOCOL_VERSION` stays at 9: a pre-42 server never names
+// that door, so this bundle still serves an older server.
+export const CLIENT_PROTOCOL_VERSION = 42;
 
 // #193 — force the correct WS scheme from the page origin, absolutely.
 //

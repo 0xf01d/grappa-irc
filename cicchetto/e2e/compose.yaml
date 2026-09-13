@@ -421,6 +421,17 @@ services:
         # extra ones, so accreting onto the shared vjt would leave two
         # permanent sessions and redden the admin-sessions leak canary.
         mix grappa.create_user --name mute1038 --password test-password-not-secret
+        # #1911 — the pre-linked OIDC persona (seedData OIDC1911_USER).
+        # The link row binds the grappa user to the stub OP's `oidc1911`
+        # consent persona EXACTLY as server.mjs emits it: issuer
+        # "https://oidc-test:3443", sub "1911-linked-sub". One remote
+        # identity, one local account — the golden path the spec asserts.
+        # NO bind_network (same argument as flood-victim: a provider login
+        # mints only an accounts_sessions row). Idempotent re-run is safe:
+        # the seeder wipes with `compose down -v`, and a second insert
+        # would trip the (issuer, subject) unique index loudly.
+        mix grappa.create_user --name oidc1911 --password test-password-not-secret
+        mix run -e 'user = Grappa.Repo.get_by!(Grappa.Accounts.User, name: "oidc1911"); {:ok, _} = Grappa.Auth.Oidc.link_identity(user.id, "https://oidc-test:3443", "1911-linked-sub", "oidc-op e2e")'
     networks:
       grappa-e2e: {}
 

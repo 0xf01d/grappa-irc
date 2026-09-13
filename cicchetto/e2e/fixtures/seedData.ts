@@ -217,6 +217,16 @@ export const FLOOD_VICTIM_USER = "flood-victim";
 export const FLOOD_VICTIM_PASSWORD = "test-password-not-secret";
 export const FLOOD_VICTIM_IDENTIFIER = "flood-victim@grappa.test";
 
+// #1911 — the pre-linked OIDC persona, reached ONLY through the provider
+// round trip (no password login spec ever uses it). The compose seeder
+// creates the grappa user and calls `Grappa.Auth.Oidc.link_identity/4`
+// binding it to issuer "https://oidc-test:3443" / sub "1911-linked-sub" —
+// the exact pair the stub OP's `oidc1911` consent button emits. NO network
+// bind (same argument as flood-victim): a provider login mints only an
+// accounts_sessions row, no upstream IRC session to poison downstream
+// specs. The link row is seeded once and read-only to specs.
+export const OIDC1911_USER = "oidc1911";
+
 const TOKEN_ENV_VAR = "E2E_VJT_TOKEN";
 const SUBJECT_ENV_VAR = "E2E_VJT_SUBJECT";
 const ADMIN_TOKEN_ENV_VAR = "E2E_ADMIN_TOKEN";

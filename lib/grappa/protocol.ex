@@ -1136,7 +1136,25 @@ defmodule Grappa.Protocol do
   # version (the one that touches it, #2102, carries 21).
   #
   # @min_protocol_version stays at 1: an old bundle drops the undeclared key.
-  @protocol_version 41
+  #
+  # ---------------------------------------------------------------------------
+  # 42 — issue 1911: the OIDC login door joins the throttle-door enum
+  # ---------------------------------------------------------------------------
+  #
+  # ADDED: `:oidc_login` on the admin-events `login_throttle_door` enum —
+  # the atom that names BOTH the new `Grappa.RateLimit.FailureWindow` bucket
+  # and the `login_throttled` event a tripped window emits, so cic's Events
+  # tab can name the door that tripped. One enum member, additive in the
+  # strictest sense — no field, no event kind. It still needs the number,
+  # because cic's generated `wireSchema` narrows `door` to a CLOSED union and
+  # an old bundle served a new server would discard the very event that says
+  # a login door is under attack. That is the #1393d rule landing exactly
+  # where it was written for: the value is optional in the spec, and the
+  # break is real anyway.
+  #
+  # @min_protocol_version stays at 1: an old client only ever loses a line
+  # it never rendered.
+  @protocol_version 42
   @min_protocol_version 1
 
   @doc "The protocol version the server currently speaks."
@@ -1177,7 +1195,7 @@ defmodule Grappa.Protocol do
   # duplicated constant is positive evidence that the OTHER sites were
   # decided for you. Grep every site for the OLD number before continuing,
   # including the ones that are not Elixir.
-  @spec version() :: 41
+  @spec version() :: 42
   def version, do: @protocol_version
 
   @doc """

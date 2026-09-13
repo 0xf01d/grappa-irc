@@ -179,6 +179,13 @@ defmodule GrappaWeb.RouterScopeTest do
     {"POST", "/auth/passkeys/second-factor"},
     {"POST", "/auth/passkeys/recover"},
     {"POST", "/auth/share/consume"},
+    # #1911 — the OIDC login doors, unauthenticated by design (the router
+    # comment names this list). `authorize` mints the credential question,
+    # `callback` is the provider answering it; the server-side state/nonce/
+    # PKCE trio is the credential check, the same position the share-link
+    # one-shot token holds for /auth/share/consume.
+    {"GET", "/auth/oidc/authorize"},
+    {"GET", "/auth/oidc/callback"},
     {"GET", "/push/vapid-public-key"},
     {"GET", "/api/config"},
     {"GET", "/uploads/:slug"},

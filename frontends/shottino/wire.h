@@ -53,16 +53,18 @@
  * bump is READ (what moved, does a terminal care) rather than slept
  * through — nine bumps went by unnoticed before the pin existed.
  *
- * Last read, v40 -> v41 (issue 2419): `truncated` on `mentions_bundle`,
- * true when the away window held more rows than the server scans, so
- * older mentions may be missing; a truncated bundle can now arrive with
- * no message at all. This client does not read the key yet: it prints
- * the rows it gets and still skips an empty bundle, so a truncated one
- * says nothing here about what it left out.
+ * Last read, v40 -> v42 (issues 2419, 1911): v41 put `truncated` on
+ * `mentions_bundle`, true when the away window held more rows than the
+ * server scans, so older mentions may be missing; a truncated bundle can
+ * now arrive with no message at all. This client does not read the key
+ * yet: it prints the rows it gets and still skips an empty bundle, so a
+ * truncated one says nothing here about what it left out. v42 added the
+ * `:oidc_login` member to the admin-events `login_throttle_door` enum —
+ * not something this client reads or sends.
  *
  * Replace this note at the next bump rather than appending to it — the
  * question the pin asks is about the CURRENT gap, not a changelog. */
-#define WIRE_PROTOCOL_VERSION 41
+#define WIRE_PROTOCOL_VERSION 42
 
 #include <stdbool.h>
 #include <stddef.h>
