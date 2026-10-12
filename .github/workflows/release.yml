@@ -563,14 +563,14 @@ jobs:
       # table requires all four of these too, so a dead runner is a named gap
       # rather than a file the other leg quietly stands in for.
       - name: Upload .deb artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: grappa-deb-${{ matrix.arch }}
           path: dist/*.deb
           if-no-files-found: error
 
       - name: Upload the client .deb artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: shottino-deb-${{ matrix.arch }}
           path: dist-shottino/*.deb
@@ -789,7 +789,7 @@ jobs:
           cp infra/packaging/aur/shottino/.SRCINFO arch-out/shottino.SRCINFO
 
       - name: Upload Arch artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: grappa-arch
           path: arch-out/*
@@ -1025,14 +1025,14 @@ jobs:
       # One upload step per artifact, arch in the NAME — see the sibling note
       # in the `deb` job for both halves.
       - name: Upload .rpm artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: grappa-rpm-${{ matrix.arch }}
           path: dist/*.rpm
           if-no-files-found: error
 
       - name: Upload the client .rpm artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: shottino-rpm-${{ matrix.arch }}
           path: dist-shottino/*.rpm
