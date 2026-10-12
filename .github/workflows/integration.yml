@@ -407,7 +407,7 @@ jobs:
         # step of whichever lost the race — a red on top of the red being
         # triaged, with the evidence missing.
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: playwright-traces-shard-${{ matrix.shard }}
           path: cicchetto/e2e/test-results/
@@ -418,7 +418,7 @@ jobs:
 
       - name: Upload Playwright HTML report (on failure)
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: playwright-report-shard-${{ matrix.shard }}
           path: cicchetto/e2e/playwright-report/
@@ -431,7 +431,7 @@ jobs:
         # `if-no-files-found: ignore` because the job can also fail before
         # the stack exists at all (checkout, compose plugin, GHCR login).
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: container-logs-shard-${{ matrix.shard }}
           path: cicchetto/e2e/container-logs/
@@ -444,7 +444,7 @@ jobs:
         # compressed; this one is a few KB, and it is what stops the ~91%
         # of runs that pass from being unaskable about a stack stall.
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: log-gap-census-shard-${{ matrix.shard }}
           path: cicchetto/e2e/container-logs/gap-scan.tsv
