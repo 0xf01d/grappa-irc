@@ -78,9 +78,19 @@ defmodule Grappa.IRC.Identifier do
   @max_nick_length 30
 
   # RFC 2812 §2.3.1: channels start with #, &, +, or ! and exclude
-  # space, comma, BELL (0x07). At least one body char; length ≤ 50
-  # including the prefix.
-  @channel_regex ~r/^[#&+!][^\s,\x07]{1,49}$/
+  # space, comma, BELL (0x07). Length ≤ 50 including the prefix.
+  #
+  # Issue 2424 — `#` and `&` stand ALONE: a lone `#` is an ordinary,
+  # joinable channel upstream. bahamut's `IsChannelName`
+  # (azzurra/bahamut `include/struct.h`) reads the first byte only, and
+  # `m_join` asks nothing more of the name. Requiring a body byte here
+  # refused `/join #` as malformed and 400ed every read of the window a
+  # raw JOIN had opened.
+  #
+  # `+` and `!` still need at least one body byte. Nothing measured says
+  # either stands alone: bahamut has no `+`/`!` channels at all, and RFC
+  # 2812 gives `!` a mandatory 5-char channel id.
+  @channel_regex ~r/^(?:[#&][^\s,\x07]{0,49}|[+!][^\s,\x07]{1,49})$/
 
   # GH #152 — the IRC `ident` (the `user` slot of `nick!user@host`, sent
   # in the USER command's first param). Free-form, non-unique — validated
