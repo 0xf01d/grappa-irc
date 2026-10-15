@@ -7,8 +7,8 @@
 //
 // So the spec walks both doors in one channel, against the live ircd:
 //   * the JOIN door — `/join #` opens a window that actually JOINS (the
-//     `ownNick` arm of `selectChannel` needs the self-JOIN line and the
-//     per-channel WS join ack, which only a `:joined` window produces);
+//     sidebar's server-driven pending row appears and then retires, which
+//     only a `:joined` window does);
 //   * the per-channel doors a joined window uses — an own PRIVMSG posts to
 //     `/channels/%23/messages` and renders, and after a reload the same line
 //     comes back from the REST read of `%23`.
@@ -16,7 +16,13 @@
 // `#` is one name on a shared testnet, not a per-run channel: no stamp can be
 // added to it. Nothing else joins it, and the per-spec subject's teardown
 // parts it with the session; the `finally` parts it early anyway.
-import { composeSend, loginAs, scrollbackLine, selectChannel } from "../fixtures/cicchettoPage";
+import {
+  composeSend,
+  loginAs,
+  scrollbackLine,
+  selectChannel,
+  sidebarWindow,
+} from "../fixtures/cicchettoPage";
 import { partChannel } from "../fixtures/grappaApi";
 import { AUTOJOIN_CHANNELS, NETWORK_SLUG } from "../fixtures/seedData";
 import { expect, specNick, specUser, test } from "../fixtures/test";
@@ -35,6 +41,18 @@ test("issue2424 — /join # joins the bare-sigil channel and its reads and sends
 
   try {
     await composeSend(page, `/join ${BARE}`);
+    // The JOIN is proven by the server-driven pseudo-row RETIRING (the
+    // cp15-b6 barrier): Sidebar authors `data-window-state` on that row only,
+    // and retires it when the window reaches `joined` or lands in the
+    // channel list. `selectChannel`'s own guard cannot carry this for `#`:
+    // its join-line filter is `hasText: windowName`, which every JOIN row
+    // matches, and the per-channel ready seam is stamped for pending
+    // windows too. Count-1 first, or count-0 below would pass on a row that
+    // never appeared.
+    await expect(sidebarWindow(page, NETWORK_SLUG, BARE)).toHaveCount(1, { timeout: 15_000 });
+    await expect(
+      sidebarWindow(page, NETWORK_SLUG, BARE).and(page.locator("[data-window-state]")),
+    ).toHaveCount(0, { timeout: 15_000 });
     await selectChannel(page, NETWORK_SLUG, BARE, { ownNick: specNick() });
 
     await composeSend(page, body);
