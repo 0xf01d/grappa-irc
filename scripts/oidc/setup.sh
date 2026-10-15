@@ -42,15 +42,19 @@ GRAPPA_PASS=e2e-acceptance-pass
 if [ ! -f data/ca.pem ] || [ ! -f data/ca.key.pem ] || \
    [ ! -f data/key.pem ] || [ ! -f data/chain.pem ]; then
     mkdir -p data
+    # Scratch work in a mktemp dir, not fixed /tmp names: a second run on a
+    # shared host must not collide with (or inherit) another lab's CSR.
+    CERT_TMP="$(mktemp -d)"
+    trap 'rm -rf "$CERT_TMP"' EXIT
     openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
         -keyout data/ca.key.pem -out data/ca.pem -subj "/CN=Grappa OIDC Lab CA" 2>/dev/null
     openssl genrsa -out data/key.pem 2048 2>/dev/null
-    openssl req -new -key data/key.pem -subj "/CN=localhost" -out /tmp/oidc-lab.csr 2>/dev/null
-    printf 'subjectAltName=DNS:localhost,IP:127.0.0.1\nbasicConstraints=CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n' > /tmp/oidc-lab-ext.cnf
-    openssl x509 -req -sha256 -days 825 -in /tmp/oidc-lab.csr -CA data/ca.pem \
-        -CAkey data/ca.key.pem -CAcreateserial -out /tmp/oidc-lab-leaf.pem -extfile /tmp/oidc-lab-ext.cnf 2>/dev/null
-    cat /tmp/oidc-lab-leaf.pem data/ca.pem > data/chain.pem
-    rm -f /tmp/oidc-lab.csr /tmp/oidc-lab-leaf.pem /tmp/oidc-lab-ext.cnf
+    openssl req -new -key data/key.pem -subj "/CN=localhost" -out "$CERT_TMP/lab.csr" 2>/dev/null
+    printf 'subjectAltName=DNS:localhost,IP:127.0.0.1\nbasicConstraints=CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n' > "$CERT_TMP/lab-ext.cnf"
+    openssl x509 -req -sha256 -days 825 -in "$CERT_TMP/lab.csr" -CA data/ca.pem \
+        -CAkey data/ca.key.pem -CAcreateserial -out "$CERT_TMP/lab-leaf.pem" -extfile "$CERT_TMP/lab-ext.cnf" 2>/dev/null
+    cat "$CERT_TMP/lab-leaf.pem" data/ca.pem > data/chain.pem
+    rm -rf "$CERT_TMP"
 fi
 
 # 2. start the server; a fresh volume needs a chown for the unprivileged uid

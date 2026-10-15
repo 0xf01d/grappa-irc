@@ -168,19 +168,22 @@ step "TLS material (CA + localhost server cert)"
 # leaf for DNS localhost / IP 127.0.0.1. grappa trusts the CA via the
 # merged-bundle compose mount (below); curl via --cacert.
 if [ ! -f runtime/ca.pem ]; then
+    # Scratch work in a mktemp dir, not fixed /tmp names: two runs on one
+    # host must not collide with (or inherit) each other's CSR.
+    CERT_TMP="$(mktemp -d)"
     openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
         -keyout runtime/ca.key.pem -out runtime/ca.pem \
         -subj "/CN=grappa OIDC acceptance CA" 2>/dev/null
     openssl genrsa -out runtime/key.pem 2048 2>/dev/null
     openssl req -new -key runtime/key.pem -subj "/CN=localhost" \
-        -out /tmp/oidc-e2e.csr 2>/dev/null
+        -out "$CERT_TMP/e2e.csr" 2>/dev/null
     printf 'subjectAltName=DNS:localhost,IP:127.0.0.1\nbasicConstraints=CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n' \
-        > /tmp/oidc-e2e-ext.cnf
-    openssl x509 -req -sha256 -days 825 -in /tmp/oidc-e2e.csr \
+        > "$CERT_TMP/e2e-ext.cnf"
+    openssl x509 -req -sha256 -days 825 -in "$CERT_TMP/e2e.csr" \
         -CA runtime/ca.pem -CAkey runtime/ca.key.pem -CAcreateserial \
-        -out /tmp/oidc-e2e-leaf.pem -extfile /tmp/oidc-e2e-ext.cnf 2>/dev/null
-    cat /tmp/oidc-e2e-leaf.pem runtime/ca.pem > runtime/chain.pem
-    rm -f /tmp/oidc-e2e.csr /tmp/oidc-e2e-leaf.pem /tmp/oidc-e2e-ext.cnf
+        -out "$CERT_TMP/e2e-leaf.pem" -extfile "$CERT_TMP/e2e-ext.cnf" 2>/dev/null
+    cat "$CERT_TMP/e2e-leaf.pem" runtime/ca.pem > runtime/chain.pem
+    rm -rf "$CERT_TMP"
 fi
 
 # The trust bundle grappa mounts over /etc/ssl/certs/ca-certificates.crt is
