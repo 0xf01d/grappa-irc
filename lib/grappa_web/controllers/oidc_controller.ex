@@ -66,10 +66,7 @@ defmodule GrappaWeb.OidcController do
   alias Grappa.Auth.Oidc
   alias Grappa.Auth.Oidc.Transaction
   alias Grappa.RateLimit.FailureWindow
-  alias GrappaWeb.AuthController
-  alias GrappaWeb.AuthJSON
-  alias GrappaWeb.LoginThrottle
-  alias GrappaWeb.RemoteIP
+  alias GrappaWeb.{AuthController, AuthJSON, LoginThrottle, RemoteIP}
 
   require Logger
 
