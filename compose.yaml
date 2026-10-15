@@ -88,6 +88,13 @@ services:
       GRAPPA_OIDC_CLIENT_SECRET: ${GRAPPA_OIDC_CLIENT_SECRET:-}
       GRAPPA_OIDC_REDIRECT_URI: ${GRAPPA_OIDC_REDIRECT_URI:-}
       GRAPPA_OIDC_SCOPES: ${GRAPPA_OIDC_SCOPES:-}
+      # #1911c — the two group gates, optional and independent. Without the
+      # passthrough here a set .env value never reaches the container and
+      # admin DEMOTION silently never happens under compose (#1911 review
+      # M4): sync_admin/3 reads a nil group as "OIDC never speaks about
+      # roles" and keeps every is_admin as it is.
+      GRAPPA_OIDC_USERS_GROUP: ${GRAPPA_OIDC_USERS_GROUP:-}
+      GRAPPA_OIDC_ADMINS_GROUP: ${GRAPPA_OIDC_ADMINS_GROUP:-}
       # Erlang distribution cookie for `bin/grappa remote-shell` (T-2). The dev
       # default keeps `docker compose up` clone-and-go; runtime.exs raises in
       # prod when it is unset or still the sentinel. Threat model: .env.example.
