@@ -109,6 +109,9 @@ fi
 # CLI twin of the server image pinned in the compose file; they MUST move
 # together (same Kanidm release).
 KANIDM_TOOLS="kanidm/tools@sha256:1ba11619dcd99804ec80342166e87337db8c934497bb2fae32bfc689dc1c80b2"
+# Same terms — this script runs in CI, where an unpinned `busybox` (the
+# volume chowns below) is a third-party build that can move under it.
+BUSYBOX_IMAGE="busybox:1.37@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e"
 URL="https://localhost:$KPORT"
 GRAPPA="http://localhost:$GPORT"
 # Test identities. The Kanidm person and the grappa account need NOT share a
@@ -275,7 +278,7 @@ $COMPOSE up -d --wait kanidm || true   # first boot may healthcheck-fail on a fr
 # chown to the invoking ids, matching the service user: the volume must be
 # writable by the same uid that must read the 0600 key.pem (CI runners are
 # uid 1001, not 1000 — a hardcoded 1000:100 leaves both unwritable there).
-docker run --rm -v "${PROJECT}_kanidm-data:/data" busybox \
+docker run --rm -v "${PROJECT}_kanidm-data:/data" "$BUSYBOX_IMAGE" \
     chown "$CONTAINER_UID:$CONTAINER_GID" /data
 $COMPOSE restart kanidm >/dev/null
 for _ in $(seq 1 45); do
@@ -412,7 +415,7 @@ GRAPPA_ENV_FILE="$RUNTIME/grappa.env" GRAPPA_ENV_MODE=0600 \
 # fresh named volume is root-owned and the unprivileged container user
 # cannot create the sqlite DB in it (run 11's database_open_failed).
 docker run --rm -v "${PROJECT}_grappa-runtime:/data" \
-    busybox chown "$CONTAINER_UID:$CONTAINER_GID" /data
+    "$BUSYBOX_IMAGE" chown "$CONTAINER_UID:$CONTAINER_GID" /data
 $COMPOSE up -d --build grappa
 for _ in $(seq 1 240); do
     curl -sf -o /dev/null "$GRAPPA/healthz" && break

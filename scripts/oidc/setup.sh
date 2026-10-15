@@ -23,6 +23,12 @@ cd "$(dirname "$0")"
 #     --format '{{.Manifest.Digest}}'
 TOOLS_IMAGE=kanidm/tools:1.11.1@sha256:1ba11619dcd99804ec80342166e87337db8c934497bb2fae32bfc689dc1c80b2
 
+# Same terms as the sibling images — this script runs in CI, where an
+# unpinned `busybox` is a third-party build that can move under it.
+#   Refresh: docker buildx imagetools inspect busybox:1.37 \
+#     --format '{{.Manifest.Digest}}'
+BUSYBOX_IMAGE=busybox:1.37@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e
+
 URL=https://localhost:8443
 KUSER=e2eci
 KPASS=e2e-acceptance-pass
@@ -52,7 +58,7 @@ fi
 # project "oidc")
 mkdir -p client
 docker compose up -d
-docker run --rm -v oidc_kanidm-data:/data busybox chown 1000:100 /data \
+docker run --rm -v oidc_kanidm-data:/data "$BUSYBOX_IMAGE" chown 1000:100 /data \
     || docker compose run --rm --no-deps --user 0 kanidm /bin/sh -c 'chown 1000:100 /data'
 docker compose restart >/dev/null
 
