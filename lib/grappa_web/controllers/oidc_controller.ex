@@ -531,15 +531,25 @@ defmodule GrappaWeb.OidcController do
   The transaction — intent AND the account it belongs to — is minted here,
   so the round trip cannot be re-pointed at another account on the way
   back. The SPA performs the navigation it is given.
+
+  Password-gated like the TOTP and passkey doors: a stolen bearer must
+  not be able to bolt a provider identity onto the account, since the
+  link outlives every session the thief's token could be revoked from.
   """
   @spec start_link(Plug.Conn.t(), map()) ::
-          Plug.Conn.t() | {:error, :not_found | :too_many_attempts | :upstream_unreachable}
-  def start_link(conn, _params) do
+          Plug.Conn.t()
+          | {:error,
+             :bad_request
+             | :invalid_credentials
+             | :not_found
+             | :too_many_attempts
+             | :upstream_unreachable}
+  def start_link(%{assigns: %{current_subject: {:user, user}}} = conn, %{"password" => password})
+      when is_binary(password) do
     if Oidc.enabled?() do
-      user_id = subject_user_id(conn)
-
-      with :ok <- check_throttle(format_ip(conn)),
-           %{id: txn_id, transaction: txn} <- Transaction.put(:link, user_id, nil) do
+      with :ok <- Accounts.verify_password(user, password),
+           :ok <- check_throttle(format_ip(conn)),
+           %{id: txn_id, transaction: txn} <- Transaction.put(:link, user.id, nil) do
         state_token(format_ip(conn), conn.assigns[:current_client_id], txn_id)
         |> then(fn state ->
           Oidc.authorize_url(Oidc.config(), %{
@@ -558,18 +568,30 @@ defmodule GrappaWeb.OidcController do
     end
   end
 
-  @doc "`DELETE /me/oidc` — remove this account's link at the configured provider."
-  @spec unlink(Plug.Conn.t(), map()) :: Plug.Conn.t() | {:error, :not_found}
-  def unlink(conn, _params) do
+  def start_link(_, _), do: {:error, :bad_request}
+
+  @doc """
+  `DELETE /me/oidc` — remove this account's link at the configured
+  provider. Password-gated like `start_link/2`: unlinking is the same
+  identity mutation in reverse.
+  """
+  @spec unlink(Plug.Conn.t(), map()) ::
+          Plug.Conn.t() | {:error, :bad_request | :invalid_credentials | :not_found}
+  def unlink(%{assigns: %{current_subject: {:user, user}}} = conn, %{"password" => password})
+      when is_binary(password) do
     if Oidc.enabled?() do
-      case Oidc.unlink_identity(subject_user_id(conn), Oidc.config().issuer) do
-        :ok -> json(conn, %{identity: nil})
-        {:error, :not_found} -> {:error, :not_found}
+      with :ok <- Accounts.verify_password(user, password) do
+        case Oidc.unlink_identity(user.id, Oidc.config().issuer) do
+          :ok -> json(conn, %{identity: nil})
+          {:error, :not_found} -> {:error, :not_found}
+        end
       end
     else
       {:error, :not_found}
     end
   end
+
+  def unlink(_, _), do: {:error, :bad_request}
 
   # The `:full_session` gate has already narrowed this subject to a user;
   # a visitor reaching here would be the gate failing, and the match
