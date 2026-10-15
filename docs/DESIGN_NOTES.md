@@ -2357,3 +2357,48 @@ by the held-offer ceiling. A global cap is a separate decision.
 **Deploy class: HOT.** Function bodies, module attributes, one new failure
 term; no migration, no `config/*.exs`, no supervision change. A transfer
 already running keeps its old code until it ends.
+<!-- entry #2424 -->
+
+---
+
+## 2026-10-15 — #2424: a lone `#` or `&` is a channel name; a lone `+` or `!` is not
+
+`/join #` answered "The request was malformed." because
+`Identifier.valid_channel?/1` demanded at least one byte after the sigil. The
+ircd disagrees: bahamut's `IsChannelName` (azzurra/bahamut `include/struct.h`,
+read at `94650287`) is `*name == '#' || *name == '&'` — the first byte and
+nothing else — and `m_join` asks no more of the name than that plus the
+forbidden-byte scan. So a lone `#` is an ordinary, joinable channel, and the
+predicate was the one place inventing a rule. Every door is built on it, so a
+raw `/quote join #` that got past the JOIN body then met the same refusal on
+every per-channel read of the window it opened: the reported "loop of
+bad_request".
+
+**The rule now:** `#` and `&` take 0..49 body bytes, `+` and `!` keep 1..49.
+Only `#` was measured on the issue; `&` follows from the same bahamut line. `+`
+and `!` stay as they were because nothing argues otherwise — bahamut has no
+`+`/`!` channels at all, and RFC 2812 gives `!` a mandatory five-character
+channel id. Widening them would be a guess. cic's one twin, the invite-link
+parser (`parseInviteLinkUrl`), drew the same line in the wrong place ("a bare
+sigil names nothing") and now refuses a lone sigil only when it is `+` or `!`.
+
+**What did not need changing, checked rather than assumed.** The issue
+comments put the loop down to a missing `encodeURIComponent` on the channel
+segment. Every REST path cic builds already encodes it, so `#` reaches the
+server as `%23` and decodes to `#`; the 400s came from the predicate, not the
+URL. The topic `…/channel:#` parses (only an EMPTY channel is refused there).
+`channel_sigil?/1` and the other server sigil tests are first-byte checks and
+already said yes to `#`, so the STATUSMSG peel turned `@#` into `#` before this
+change and the validation behind it now agrees. cic's `linkify` keeps a stray
+`#` in prose as text: it is a mention heuristic, not a validator, and #648/#730
+are about exactly that.
+
+**Not in this slice:** the issue's second ask, that a malformed channel get the
+`invalid_channel` copy instead of the generic "malformed". `invalid_channel` is
+a WS push-reply token only; giving it to REST is a new wire token and a
+protocol bump, which this wire-neutral fix is not. Split out as issue 2425,
+with the open question about the doors that take a channel OR a nick.
+
+**Deploy class: HOT** for the server (one module attribute and its doc; no
+migration, no `config/*.exs`, no supervision change), plus the cic bundle for
+the invite-link parser.
