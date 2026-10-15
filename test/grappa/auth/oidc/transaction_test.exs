@@ -77,4 +77,46 @@ defmodule Grappa.Auth.Oidc.TransactionTest do
       assert Transaction.ttl_seconds() == 300
     end
   end
+
+  # The sweep and the memory cap are the same beast as
+  # `WebAuthnChallengeStore`'s: an abandoned ceremony is never taken, so
+  # the read-path TTL check never sees it, and only driving the callbacks
+  # proves the sweep and the room-making. No real clock is needed.
+  describe "sweep and the memory cap" do
+    test "the sweep drops an expired transaction and keeps a live one" do
+      now = System.monotonic_time(:second)
+      txn = %Transaction{verifier: "v", nonce: "n", intent: :login, user_id: nil, binder: "b"}
+
+      state = %{
+        "dead" => {txn, now - 1},
+        "live" => {txn, now + 300}
+      }
+
+      assert {:noreply, swept} = Transaction.handle_info(:sweep, state)
+      assert Map.keys(swept) == ["live"]
+    end
+
+    test "a put on a store below the cap keeps every resident" do
+      now = System.monotonic_time(:second)
+      txn = %Transaction{verifier: "v", nonce: "n", intent: :login, user_id: nil, binder: "b"}
+      state = %{"a" => {txn, now + 300}, "b" => {txn, now + 300}}
+
+      assert {:reply, :ok, next} = Transaction.handle_call({:put, "c", txn, now + 300}, nil, state)
+      assert Map.keys(next) |> Enum.sort() == ["a", "b", "c"]
+    end
+
+    test "a put on a full store makes room and never exceeds the cap" do
+      now = System.monotonic_time(:second)
+      txn = %Transaction{verifier: "v", nonce: "n", intent: :login, user_id: nil, binder: "b"}
+
+      full =
+        for i <- 1..10_000, into: %{} do
+          {Integer.to_string(i), {txn, now + 300}}
+        end
+
+      assert {:reply, :ok, next} = Transaction.handle_call({:put, "fresh", txn, now + 300}, nil, full)
+      assert map_size(next) <= 10_000
+      assert Map.has_key?(next, "fresh")
+    end
+  end
 end
