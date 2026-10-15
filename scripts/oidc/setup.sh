@@ -49,6 +49,9 @@ if [ ! -f data/ca.pem ] || [ ! -f data/ca.key.pem ] || \
     openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
         -keyout data/ca.key.pem -out data/ca.pem -subj "/CN=Grappa OIDC Lab CA" 2>/dev/null
     openssl genrsa -out data/key.pem 2048 2>/dev/null
+    # openssl writes with the ambient umask; the trust anchor and the leaf
+    # key must not land world-readable.
+    chmod 600 data/ca.key.pem data/key.pem
     openssl req -new -key data/key.pem -subj "/CN=localhost" -out "$CERT_TMP/lab.csr" 2>/dev/null
     printf 'subjectAltName=DNS:localhost,IP:127.0.0.1\nbasicConstraints=CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n' > "$CERT_TMP/lab-ext.cnf"
     openssl x509 -req -sha256 -days 825 -in "$CERT_TMP/lab.csr" -CA data/ca.pem \

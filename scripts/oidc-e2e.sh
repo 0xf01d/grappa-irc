@@ -175,6 +175,9 @@ if [ ! -f runtime/ca.pem ]; then
         -keyout runtime/ca.key.pem -out runtime/ca.pem \
         -subj "/CN=grappa OIDC acceptance CA" 2>/dev/null
     openssl genrsa -out runtime/key.pem 2048 2>/dev/null
+    # openssl writes with the ambient umask; the trust anchor and the leaf
+    # key must not land world-readable.
+    chmod 600 runtime/ca.key.pem runtime/key.pem
     openssl req -new -key runtime/key.pem -subj "/CN=localhost" \
         -out "$CERT_TMP/e2e.csr" 2>/dev/null
     printf 'subjectAltName=DNS:localhost,IP:127.0.0.1\nbasicConstraints=CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n' \
