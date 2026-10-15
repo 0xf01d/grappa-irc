@@ -469,6 +469,49 @@ defmodule GrappaWeb.OidcControllerTest do
                %{"kind" => "error", "code" => "not_linked"}
     end
 
+    test "provisioning under a name grappa rejects is refused", %{conn: conn} do
+      {bypass, key} = enable_round_trip(users_group: "grappa_users")
+
+      {state, nonce} = begin_login(conn)
+
+      expect_token(bypass, %{
+        "id_token" =>
+          id_token(
+            key,
+            id_claims(nonce, %{
+              "sub" => "bad-name",
+              "preferred_username" => "9no-leading-digit@localhost",
+              "groups" => ["grappa_users"]
+            })
+          )
+      })
+
+      assert conn |> get("/auth/oidc/callback?code=c&state=#{state}") |> fragment() ==
+               %{"kind" => "error", "code" => "provisioning_refused"}
+    end
+
+    test "provisioning onto a taken name is refused by name", %{conn: conn} do
+      {bypass, key} = enable_round_trip(users_group: "grappa_users")
+      user_fixture(name: "taken")
+
+      {state, nonce} = begin_login(conn)
+
+      expect_token(bypass, %{
+        "id_token" =>
+          id_token(
+            key,
+            id_claims(nonce, %{
+              "sub" => "name-clash",
+              "preferred_username" => "taken@localhost",
+              "groups" => ["grappa_users"]
+            })
+          )
+      })
+
+      assert conn |> get("/auth/oidc/callback?code=c&state=#{state}") |> fragment() ==
+               %{"kind" => "error", "code" => "name_taken"}
+    end
+
     test "an admins-group login grants is_admin", %{conn: conn} do
       {bypass, key} = enable_round_trip(admins_group: "grappa_admins")
       user = user_fixture(is_admin: false)
