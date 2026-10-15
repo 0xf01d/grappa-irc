@@ -131,12 +131,19 @@ defmodule Grappa.Auth.Oidc.Discovery do
 
   # The issuer check. Compared trailing-slash-insensitively: providers
   # disagree about the final slash and the disagreement is not a
-  # security property worth failing a login over.
+  # security property worth failing a login over. The document's issuer
+  # is provider text, so it crosses the log inspected — bounded and
+  # newline-escaped, per the L3 discipline.
   @spec check_issuer(Grappa.Auth.Oidc.Config.t(), String.t()) :: :ok | {:error, :provider_unavailable}
   defp check_issuer(config, issuer) do
     if Grappa.Auth.Oidc.Config.normalize_issuer(issuer) == config.issuer do
       :ok
     else
+      Logger.warning(
+        "oidc discovery: document issuer #{inspect(issuer, printable_limit: 200)} " <>
+          "does not match the configured #{config.issuer}"
+      )
+
       {:error, :provider_unavailable}
     end
   end
@@ -144,8 +151,12 @@ defmodule Grappa.Auth.Oidc.Discovery do
   @spec fetch_string(map(), String.t()) :: {:ok, String.t()} | {:error, :provider_unavailable}
   defp fetch_string(document, key) do
     case Map.fetch(document, key) do
-      {:ok, value} when is_binary(value) and byte_size(value) > 0 -> {:ok, value}
-      _ -> {:error, :provider_unavailable}
+      {:ok, value} when is_binary(value) and byte_size(value) > 0 ->
+        {:ok, value}
+
+      _ ->
+        Logger.warning("oidc discovery: document has no usable #{key}")
+        {:error, :provider_unavailable}
     end
   end
 
@@ -158,6 +169,7 @@ defmodule Grappa.Auth.Oidc.Discovery do
             {:ok, value}
 
           _ ->
+            Logger.warning("oidc discovery: document #{key} is not an https URL")
             {:error, :provider_unavailable}
         end
 

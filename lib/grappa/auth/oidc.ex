@@ -272,13 +272,27 @@ defmodule Grappa.Auth.Oidc do
 
       # RFC 6749 §5.2 — the provider refused THIS code (spent, expired,
       # redirect mismatch, verifier mismatch). A provider problem is
-      # `:provider_unavailable`; a spent code is not.
+      # `:provider_unavailable`; a spent code is not. The provider's own
+      # error code is the difference an operator needs; it crosses the
+      # log inspected — bounded and newline-escaped, per the L3
+      # discipline.
       {:ok, %Req.Response{status: status, body: %{"error" => error}}}
       when status in [400, 401] and is_binary(error) ->
+        Logger.warning(
+          "oidc token endpoint: code refused (HTTP #{status}, error #{inspect(error, printable_limit: 120)})"
+        )
+
         {:error, :invalid_code}
 
-      _ ->
-        log_token_failure(:unexpected_response)
+      # Every other 200-shape — wrong status, no error member, a body that
+      # is not a map — is named for what it OBSERVED, status and body
+      # together (inspect escapes newlines and bounds the body, so a
+      # chatty provider cannot write log lines or flood the log).
+      {:ok, %Req.Response{status: status, body: body}} ->
+        Logger.warning(
+          "oidc token endpoint: unexpected response (HTTP #{status}, body #{inspect(body, printable_limit: 200)})"
+        )
+
         {:error, :provider_unavailable}
     end
   rescue
@@ -296,14 +310,6 @@ defmodule Grappa.Auth.Oidc do
   # cure as the controller's `inspect/1` on the provider `error` parameter.
   @spec one_line(String.t()) :: String.t()
   defp one_line(text), do: String.replace(text, ["\r\n", "\n", "\r"], " ")
-
-  # The catch-all above is the one arm that has nothing of its own to say;
-  # it still says what it observed rather than nothing.
-  @spec log_token_failure(term()) :: :ok
-  defp log_token_failure(reason) do
-    Logger.warning("oidc token endpoint: unexpected response (#{inspect(reason)})")
-    :ok
-  end
 
   defp now, do: System.system_time(:second)
 

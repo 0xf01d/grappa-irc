@@ -48,14 +48,31 @@ defmodule Grappa.Auth.Oidc.Jwks do
   @spec refresh(Grappa.Auth.Oidc.Discovery.t()) ::
           {:ok, [map()]} | {:error, :provider_unavailable}
   def refresh(discovery) do
-    with {:ok, %{"keys" => keys}} <- get_keys(discovery.jwks_uri),
-         {:ok, keys} <- filter_signing_keys(keys) do
-      :persistent_term.put(
-        {__MODULE__, discovery.jwks_uri},
-        {keys, System.system_time(:millisecond)}
-      )
+    case get_keys(discovery.jwks_uri) do
+      {:ok, %{"keys" => keys}} ->
+        case filter_signing_keys(keys) do
+          {:ok, keys} ->
+            :persistent_term.put(
+              {__MODULE__, discovery.jwks_uri},
+              {keys, System.system_time(:millisecond)}
+            )
 
-      {:ok, keys}
+            {:ok, keys}
+
+          {:error, :provider_unavailable} ->
+            Logger.warning("oidc jwks: #{one_line(discovery.jwks_uri)} publishes no signing keys")
+            {:error, :provider_unavailable}
+        end
+
+      # A 200 whose body has no "keys" member: same door-is-broken answer,
+      # but the shape refusal is named at the boundary like every other.
+      {:ok, _body} ->
+        Logger.warning("oidc jwks: #{one_line(discovery.jwks_uri)} answered without a keys member")
+        {:error, :provider_unavailable}
+
+      # get_keys logged the transport cause at the boundary already.
+      {:error, :provider_unavailable} ->
+        {:error, :provider_unavailable}
     end
   end
 
