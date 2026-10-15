@@ -5,12 +5,26 @@ defmodule Grappa.Accounts.WebAuthnChallengeStore do
   A ceremony that is never completed is never `take/2`n, so the TTL check
   on the read path alone retained abandoned entries for the life of the
   node — and the endpoint that fills this store sits on the unauthenticated
-  login door. The periodic sweep is what bounds it.
+  login door. The periodic sweep bounds DURATION; `@max_entries` below
+  bounds COUNT.
   """
   use GenServer
 
   @ttl_seconds 300
   @sweep_interval_ms :timer.seconds(60)
+
+  # The store's memory ceiling. The door that mints entries is
+  # unauthenticated — one entry per login-page view even without malice,
+  # unbounded-with-malice — and the 60s sweep bounds DURATION, not
+  # COUNT. `@max_entries` bounds the count: on a full store the put
+  # first drops everything already expired, then everything expiring no
+  # later than the incoming entry (they die first anyway), so a flood
+  # turns eviction into steady-state and the GenServer's heap stays
+  # proportional to live ceremonies, not to the number of requests ever
+  # received. `Grappa.Auth.Oidc.Transaction` carries the same bound for
+  # the same reason — the two stores are one pattern, and a bound on one
+  # and not the other would be a silent divergence.
+  @max_entries 10_000
 
   @type purpose :: :registration | :authentication | :mode_change | :passwordless | :second_factor
   @type metadata :: map()
@@ -65,7 +79,7 @@ defmodule Grappa.Accounts.WebAuthnChallengeStore do
 
   @impl GenServer
   def handle_call({:put, id, challenge, purpose, metadata, expires_at}, _, state) do
-    {:reply, :ok, Map.put(state, id, {challenge, purpose, metadata, expires_at})}
+    {:reply, :ok, Map.put(evict_for(state, expires_at), id, {challenge, purpose, metadata, expires_at})}
   end
 
   def handle_call({:take, id, purpose, now}, _, state) do
@@ -89,6 +103,30 @@ defmodule Grappa.Accounts.WebAuthnChallengeStore do
   defp drop_expired(state, now) do
     Map.reject(state, fn {_, {_, _, _, expires_at}} ->
       expires_at <= now
+    end)
+  end
+
+  # Room-making on an at-cap store, run before every insert — same shape
+  # as `Grappa.Auth.Oidc.Transaction.evict_for/2`, one 4-tuple value
+  # instead of two. TTLs are uniform (`@ttl_seconds`), so "expires no
+  # later than the incoming entry" is exactly "inserted no later than
+  # now" — every put on a full store retires the oldest residents and
+  # the size stays at the cap.
+  @spec evict_for(%{optional(String.t()) => term()}, integer()) ::
+          %{optional(String.t()) => term()}
+  defp evict_for(state, _incoming_expires_at) when map_size(state) < @max_entries, do: state
+
+  defp evict_for(state, incoming_expires_at) do
+    state
+    |> drop_expired(System.monotonic_time(:second))
+    |> then(fn state ->
+      if map_size(state) < @max_entries do
+        state
+      else
+        Map.reject(state, fn {_, {_, _, _, expires_at}} ->
+          expires_at <= incoming_expires_at
+        end)
+      end
     end)
   end
 end

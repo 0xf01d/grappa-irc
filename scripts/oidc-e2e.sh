@@ -496,7 +496,10 @@ frag() {
 # fragment in $FRAG. The consent page is handled inside callback(), so a
 # person's FIRST authorization needs nothing extra here.
 login_leg() {  # $1 = person name
-    $FLOW -o /dev/null -D runtime/hdr-authz "$GRAPPA/auth/oidc/authorize"
+    # The door refuses a bare login navigation: the binder is the
+    # login-CSRF cure (cic mints one per round trip), throwaway here.
+    local bind="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n')"
+    $FLOW -o /dev/null -D runtime/hdr-authz "$GRAPPA/auth/oidc/authorize?bind=$bind"
     AURL=$(grep -i '^location:' runtime/hdr-authz | tr -d '\r' | cut -d ' ' -f2 || true)
     [ -n "$AURL" ] || die "no redirect from /auth/oidc/authorize"
     new_jar

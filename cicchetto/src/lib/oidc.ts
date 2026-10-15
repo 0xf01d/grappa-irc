@@ -21,6 +21,19 @@
 //     and a fragment is never transmitted with a request and never
 //     reaches `Referer` or the server's access log.
 //
+//   * arming — before leaving, a random `bind` binder is minted into
+//     sessionStorage and carried on the authorize navigation; the
+//     landing that comes back echoes it, and a landing whose binder
+//     does not match the stored copy installs NOTHING. This is the
+//     login-CSRF cure. The fragment is public material — anyone can
+//     write `/login#oidc=<base64url>` and a `session` landing inside it
+//     is otherwise indistinguishable from a real one; the binder is the
+//     one value the forger cannot know, because it lived only in this
+//     browser's sessionStorage and was minted on the way out of a
+//     navigation the forger did not start. The stored copy is consumed
+//     by the FIRST matching landing, so a landing is single-use the
+//     same way the server's transaction is.
+//
 // The landing shapes are the mirror of `GrappaWeb.OidcController`'s
 // `finish/2` payloads. They are deliberately NOT part of the generated
 // wire contract (`wireTypes.ts`): the controller answers `json/2` and a
@@ -36,18 +49,59 @@ import type { Subject } from "./api";
 //
 //   * `session` — a full login (`AuthenticatedLoginResponse` envelope,
 //     the same shape `POST /auth/login` returns), for an account whose
-//     second factor asked nothing further.
+//     second factor asked nothing further. Carries the `bind` echo.
 //   * `totp` — the account's local factor is still armed; spend the
-//     challenge at the ordinary TOTP form.
+//     challenge at the ordinary TOTP form. Carries the `bind` echo too:
+//     it installs nothing by itself, but any landing that cannot prove
+//     it is ours refuses at the same gate.
 //   * `linked` — the settings-initiated link round trip came back good.
+//     No binder: that round trip is started by an authenticated fetch
+//     and installs nothing.
 //   * `error` — refused; `code` is a stable snake_case token.
 export type OidcLanding =
-  | { kind: "session"; token: string; subject: Subject }
-  | { kind: "totp"; challenge_token: string }
+  | { kind: "session"; token: string; subject: Subject; bind: string }
+  | { kind: "totp"; challenge_token: string; bind: string }
   | { kind: "linked"; label: string | null }
   | { kind: "error"; code: string };
 
 const FRAGMENT_KEY = "oidc";
+
+// The browser half of the login-CSRF cure: minted at the start of a
+// login round trip, held until the landing comes back. sessionStorage
+// because a binder that survives a browser restart is a binder an
+// attacker-pasted landing can still match hours later; tab-scoped
+// storage dies with the tab, which is exactly the lifetime a round
+// trip has.
+const BINDER_KEY = "grappa-oidc-binder";
+
+// 32 random bytes, base64url — the same entropy class as the server's
+// own PKCE verifier, and never sent anywhere but the authorize URL of
+// the round trip it arms.
+function mintBinder(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+
+  const binder = btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+
+  sessionStorage.setItem(BINDER_KEY, binder);
+  return binder;
+}
+
+// The landing gate. TRUE only when `expected` matches the stored
+// binder, and a match CONSUMES the stored copy: one binder arms one
+// landing, so a captured landing URL cannot be re-driven into a second
+// install. A MISMATCH keeps the stored copy — a poisoned link landing
+// in the middle of a real round trip must not burn the user's own
+// still-armed binder.
+export function verifyOidcBinder(expected: string): boolean {
+  const held = sessionStorage.getItem(BINDER_KEY);
+  if (held === null || held !== expected) return false;
+  sessionStorage.removeItem(BINDER_KEY);
+  return true;
+}
 
 // The one read of the landing. `hash` is the raw `location.hash` (with
 // or without its leading `#`); anything that is not a well-formed
@@ -85,15 +139,14 @@ export function clearOidcLanding(): void {
 
 // Whether this deployment offers the door at all. Probed rather than
 // configured, because `/api/config` does not publish it (the wire-pin
-// debt named above): a 404 means the deployment has no provider — the
-// button would only tease — and any redirect means it does.
+// debt named above): `?probe` asks the question WITHOUT minting a
+// transaction — a plain navigation here would grow the server's
+// ceremony store on every login-page view — so a 200 means the door
+// exists and a 404 means the button would only tease.
 export async function oidcLoginAvailable(): Promise<boolean> {
   try {
-    const res = await fetch("/auth/oidc/authorize", { redirect: "manual" });
-    // Browsers hand a `redirect: "manual"` response back as an
-    // opaque-redirect filtered response (`type: "opaqueredirect"`); the
-    // status check is for non-browser runtimes that surface the real 302.
-    return res.type === "opaqueredirect" || res.status === 302;
+    const res = await fetch("/auth/oidc/authorize?probe=1");
+    return res.ok;
   } catch {
     // An unreachable server is not a missing door: no probe result is
     // better than a wrong one, so the button stays hidden and the next
@@ -103,7 +156,8 @@ export async function oidcLoginAvailable(): Promise<boolean> {
 }
 
 export function beginOidcLogin(): void {
-  window.location.assign("/auth/oidc/authorize");
+  const binder = mintBinder();
+  window.location.assign(`/auth/oidc/authorize?bind=${encodeURIComponent(binder)}`);
 }
 
 // base64url → UTF-8 string, `null` for anything that does not decode.
@@ -130,7 +184,12 @@ function isOidcLanding(value: unknown): value is OidcLanding {
     case "session":
       return isSessionLanding(landing);
     case "totp":
-      return typeof landing.challenge_token === "string" && landing.challenge_token !== "";
+      return (
+        typeof landing.challenge_token === "string" &&
+        landing.challenge_token !== "" &&
+        typeof landing.bind === "string" &&
+        landing.bind !== ""
+      );
     case "linked":
       return landing.label === null || typeof landing.label === "string";
     case "error":
@@ -143,9 +202,12 @@ function isOidcLanding(value: unknown): value is OidcLanding {
 // Same narrowing posture as `auth.ts`'s `isValidSubject`: the subject
 // rides an unauthenticated fragment, so its shape is checked here rather
 // than trusted. An unrecognised shape poisons the WHOLE landing — a
-// bearer with no subject is not installable.
+// bearer with no subject is not installable. The `bind` echo is part of
+// the shape for the same reason: a landing that cannot even claim a
+// binder is refused before `verifyOidcBinder` is ever asked.
 function isSessionLanding(landing: Record<string, unknown>): boolean {
   if (typeof landing.token !== "string" || landing.token === "") return false;
+  if (typeof landing.bind !== "string" || landing.bind === "") return false;
   const subject = landing.subject;
   if (typeof subject !== "object" || subject === null) return false;
   const candidate = subject as Record<string, unknown>;

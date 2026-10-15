@@ -34,8 +34,21 @@ defmodule Grappa.Auth.Oidc.Transaction do
   @ttl_seconds 300
   @sweep_interval_ms :timer.seconds(60)
 
+  # The store's memory ceiling. The door that mints entries is
+  # unauthenticated — one entry per login-page view even without malice,
+  # unbounded-with-malice — and the 60s sweep bounds DURATION, not
+  # COUNT. `@max_entries` bounds the count: on a full store the put
+  # first drops everything already expired, then everything expiring no
+  # later than the incoming entry (they die first anyway), so a flood
+  # turns eviction into steady-state and the GenServer's heap stays
+  # proportional to live ceremonies, not to the number of requests ever
+  # received. `WebAuthnChallengeStore` carries the same bound for the
+  # same reason — the two stores are one pattern, and a bound on one
+  # and not the other would be a silent divergence.
+  @max_entries 10_000
+
   @enforce_keys [:verifier, :nonce, :intent, :user_id]
-  defstruct @enforce_keys
+  defstruct @enforce_keys ++ [:binder]
 
   @type intent :: :login | :link
 
@@ -43,7 +56,8 @@ defmodule Grappa.Auth.Oidc.Transaction do
           verifier: String.t(),
           nonce: String.t(),
           intent: intent(),
-          user_id: Ecto.UUID.t() | nil
+          user_id: Ecto.UUID.t() | nil,
+          binder: String.t() | nil
         }
 
   @doc false
@@ -53,16 +67,36 @@ defmodule Grappa.Auth.Oidc.Transaction do
   @doc """
   Stores a transaction and returns its opaque id alongside the
   challenge material the caller needs to build the authorization URL.
+
+  The `binder` is the browser-minted value the SPA requires echoed back
+  on the landing before it installs anything (the login-CSRF cure): a
+  `:login` round trip carries one, a `:link` round trip — started by an
+  authenticated `fetch`, whose landing installs nothing — carries `nil`.
   """
-  @spec put(intent(), Ecto.UUID.t() | nil) :: %{id: String.t(), transaction: t()}
-  def put(intent, user_id) do
-    transaction = %__MODULE__{
+  @spec put(:login, nil, String.t()) :: %{id: String.t(), transaction: t()}
+  def put(:login, nil, binder) when is_binary(binder) and byte_size(binder) > 0 do
+    do_put(%__MODULE__{
       verifier: pkce_verifier(),
       nonce: pkce_verifier(),
-      intent: intent,
-      user_id: user_id
-    }
+      intent: :login,
+      user_id: nil,
+      binder: binder
+    })
+  end
 
+  @spec put(:link, Ecto.UUID.t(), nil) :: %{id: String.t(), transaction: t()}
+  def put(:link, user_id, nil) when is_binary(user_id) do
+    do_put(%__MODULE__{
+      verifier: pkce_verifier(),
+      nonce: pkce_verifier(),
+      intent: :link,
+      user_id: user_id,
+      binder: nil
+    })
+  end
+
+  @spec do_put(t()) :: %{id: String.t(), transaction: t()}
+  defp do_put(%__MODULE__{} = transaction) do
     id = Ecto.UUID.generate()
     expires_at = System.monotonic_time(:second) + @ttl_seconds
     :ok = GenServer.call(__MODULE__, {:put, id, transaction, expires_at})
@@ -111,7 +145,7 @@ defmodule Grappa.Auth.Oidc.Transaction do
 
   @impl GenServer
   def handle_call({:put, id, transaction, expires_at}, _, state) do
-    {:reply, :ok, Map.put(state, id, {transaction, expires_at})}
+    {:reply, :ok, Map.put(evict_for(state, expires_at), id, {transaction, expires_at})}
   end
 
   def handle_call({:take, id, now}, _, state) do
@@ -134,5 +168,27 @@ defmodule Grappa.Auth.Oidc.Transaction do
 
   defp drop_expired(state, now) do
     Map.reject(state, fn {_, {_transaction, expires_at}} -> expires_at <= now end)
+  end
+
+  # Room-making on an at-cap store, run before every insert. TTLs are
+  # uniform (`@ttl_seconds`), so "expires no later than the incoming
+  # entry" is exactly "inserted no later than now" — every put on a full
+  # store retires the oldest residents and the size stays at the cap.
+  @spec evict_for(%{optional(String.t()) => term()}, integer()) ::
+          %{optional(String.t()) => term()}
+  defp evict_for(state, _incoming_expires_at) when map_size(state) < @max_entries, do: state
+
+  defp evict_for(state, incoming_expires_at) do
+    state
+    |> drop_expired(System.monotonic_time(:second))
+    |> then(fn state ->
+      if map_size(state) < @max_entries do
+        state
+      else
+        Map.reject(state, fn {_, {_transaction, expires_at}} ->
+          expires_at <= incoming_expires_at
+        end)
+      end
+    end)
   end
 end

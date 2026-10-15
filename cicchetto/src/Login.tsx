@@ -13,6 +13,7 @@ import {
   type OidcLanding,
   oidcLoginAvailable,
   readOidcLanding,
+  verifyOidcBinder,
 } from "./lib/oidc";
 
 // Bare credential form. The walking-skeleton login surface is one card,
@@ -433,6 +434,20 @@ const Login: Component = () => {
   // `session` and `totp` continue the login; `linked` and `error` stay on
   // the card and explain themselves.
   const consumeOidcLanding = (landing: OidcLanding): void => {
+    // The binder gate: the fragment is public material, so `session` and
+    // `totp` landings install nothing unless they echo the `bind` value
+    // this browser minted on the way out (`verifyOidcBinder` consumed the
+    // stored copy on success — a landing is single-use).
+    if (
+      (landing.kind === "session" || landing.kind === "totp") &&
+      !verifyOidcBinder(landing.bind)
+    ) {
+      setError(
+        OIDC_ERROR_COPY.invalid_state ??
+          "That sign-in attempt has expired or was already used. Start again.",
+      );
+      return;
+    }
     switch (landing.kind) {
       case "session":
         // The same install the share-link route uses: a bearer + subject

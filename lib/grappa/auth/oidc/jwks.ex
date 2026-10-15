@@ -18,6 +18,8 @@ defmodule Grappa.Auth.Oidc.Jwks do
 
   @moduledoc since: "1.6.0"
 
+  require Logger
+
   @ttl_ms 60_000
   @http_timeout_ms 5_000
 
@@ -89,14 +91,27 @@ defmodule Grappa.Auth.Oidc.Jwks do
 
   defp signing_key?(_), do: false
 
+  # Same boundary as `Grappa.Auth.Oidc.Discovery.get_document/1`: the
+  # domain error collapses every transport failure into one, so the log
+  # carries the difference.
   @spec get_keys(String.t()) :: {:ok, map()} | {:error, :provider_unavailable}
   defp get_keys(url) do
     case Req.get(url, receive_timeout: @http_timeout_ms, retry: :transient) do
-      {:ok, %Req.Response{status: 200, body: body}} when is_map(body) -> {:ok, body}
-      _ -> {:error, :provider_unavailable}
+      {:ok, %Req.Response{status: 200, body: body}} when is_map(body) ->
+        {:ok, body}
+
+      {:ok, %Req.Response{status: status}} ->
+        Logger.warning("oidc jwks: #{url} answered HTTP #{status}")
+        {:error, :provider_unavailable}
+
+      {:error, exception} ->
+        Logger.warning("oidc jwks: #{url} — #{Exception.format(:error, exception)}")
+        {:error, :provider_unavailable}
     end
   rescue
-    _ -> {:error, :provider_unavailable}
+    exception ->
+      Logger.warning("oidc jwks: #{url} — #{Exception.format(:error, exception)}")
+      {:error, :provider_unavailable}
   end
 
   if Mix.env() == :test do

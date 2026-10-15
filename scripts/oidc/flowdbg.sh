@@ -29,7 +29,10 @@ CURL="curl -sS --cacert data/ca.pem -b $TMP/jar -c $TMP/jar -m 20"
 
 # 1. authorize URL from grappa (signed state + PKCE live server-side)
 if [ "$MODE" = "login" ]; then
-    $CURL -o /dev/null -D "$TMP/authz" "$GRAPPA/auth/oidc/authorize"
+    # The door refuses a bare login navigation: the binder is the
+    # login-CSRF cure (cic mints one per round trip), throwaway here.
+    bind="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n')"
+    $CURL -o /dev/null -D "$TMP/authz" "$GRAPPA/auth/oidc/authorize?bind=$bind"
     AURL=$(grep -i '^location:' "$TMP/authz" | tr -d '\r' | cut -d' ' -f2)
 else
     AURL=$($CURL -X POST "$GRAPPA/me/oidc/link" -H "Authorization: Bearer $GTOK" \

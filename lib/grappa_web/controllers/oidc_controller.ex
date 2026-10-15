@@ -16,9 +16,10 @@ defmodule GrappaWeb.OidcController do
   needs. cic's `lib/oidc.ts` owns the codec; the shapes here are its
   mirror, deliberately NOT a `GrappaWeb.*JSON` view — see "Wire" below.
 
-  Kinds cic understands: `session` (bearer + subject — the exact
-  `AuthenticatedLoginResponse` envelope), `totp` (a challenge token to
-  spend at `/auth/totp/verify`), `linked`, `error`.
+  Kinds cic understands: `session` (bearer + subject + the `bind` echo —
+  the exact `AuthenticatedLoginResponse` envelope), `totp` (a challenge
+  token to spend at `/auth/totp/verify` + the same echo), `linked`,
+  `error`.
 
   ## Wire
 
@@ -104,6 +105,7 @@ defmodule GrappaWeb.OidcController do
           | :already_linked
           | :invalid_identity
           | :second_factor_unsupported
+          | :session_mint_failed
           | :too_many_attempts
           | :name_taken
           | :invalid_name
@@ -113,13 +115,31 @@ defmodule GrappaWeb.OidcController do
   provider, or a bare 404 when no provider is configured: the door does
   not exist on this deployment, which is also how cic's capability probe
   discovers it.
+
+  `?probe` answers the capability question WITHOUT minting anything —
+  200 or 404, no transaction, no state token. The probe runs on every
+  login-page view and the store behind this door is unauthenticated, so
+  a probe that minted would let a page refresh grow the ceremony store.
+
+  A real navigation carries `?bind=<binder>` — a random value cic mints
+  before redirecting and holds in sessionStorage. The server cannot
+  verify a client-minted secret; its job is to carry it through the
+  round trip and echo it on the landing, so every landing this door
+  mints carries the value cic checks against its own copy before it
+  installs anything. A navigation without a binder is refused: its
+  landing would be one anyone could have forged.
   """
   @spec authorize(Plug.Conn.t(), map()) :: Plug.Conn.t()
-  def authorize(conn, _params) do
-    if Oidc.enabled?() do
-      start_transaction(conn, :login, nil)
-    else
-      send_resp(conn, 404, "not found")
+  def authorize(conn, params) do
+    cond do
+      not Oidc.enabled?() ->
+        send_resp(conn, 404, "not found")
+
+      params["probe"] ->
+        send_resp(conn, 200, "")
+
+      true ->
+        start_transaction(conn, :login, nil, params["bind"])
     end
   end
 
@@ -148,8 +168,11 @@ defmodule GrappaWeb.OidcController do
        when is_binary(state) and is_binary(error) do
     # The provider refused the human (access_denied) or its own request.
     # Not a failure of ours to charge anybody for — the browser is simply
-    # sent home with the provider's own word for it.
-    Logger.info("oidc callback: provider returned error=#{error}")
+    # sent home with the provider's own word for it. `inspect/1` because
+    # the value is provider-controlled and this is a newline-delimited
+    # log: interpolation would let a crafted `error` parameter write
+    # believable log lines of its own.
+    Logger.info("oidc callback: provider returned error=#{inspect(error)}")
     finish(conn, %{kind: "error", code: "provider_refused"})
   end
 
@@ -217,6 +240,9 @@ defmodule GrappaWeb.OidcController do
         log_refusal(:second_factor_unsupported)
         finish(conn, %{kind: "error", code: "second_factor_unsupported"})
 
+      {:error, :session_mint_failed} ->
+        finish(conn, %{kind: "error", code: "session_mint_failed"})
+
       {:error, :expired_token} ->
         finish(conn, %{kind: "error", code: "expired_token"})
 
@@ -244,22 +270,23 @@ defmodule GrappaWeb.OidcController do
   @spec settle(Plug.Conn.t(), Transaction.t(), map()) :: Plug.Conn.t() | {:error, oidc_error()}
   defp settle(conn, txn, identity) do
     case txn.intent do
-      :login -> login(conn, identity)
+      :login -> login(conn, txn, identity)
       :link -> link(conn, identity, txn.user_id)
     end
   end
 
-  @spec login(Plug.Conn.t(), map()) :: Plug.Conn.t() | {:error, oidc_error()}
-  defp login(conn, identity) do
+  @spec login(Plug.Conn.t(), Transaction.t(), map()) ::
+          Plug.Conn.t() | {:error, oidc_error()}
+  defp login(conn, txn, identity) do
     case Oidc.find_identity(identity.issuer, identity.subject) do
       {:ok, linked} ->
         case Accounts.get_user(linked.user_id) do
-          %Accounts.User{} = user -> sync(conn, linked, user, identity)
+          %Accounts.User{} = user -> sync(conn, txn, linked, user, identity)
           nil -> {:error, :unknown_account}
         end
 
       {:error, :not_found} ->
-        provision(conn, identity)
+        provision(conn, txn, identity)
     end
   end
 
@@ -269,12 +296,12 @@ defmodule GrappaWeb.OidcController do
   # writing is what the claims say TODAY: the admin flag (in sync with
   # the admins group) and the display label (the username may have
   # moved). Both are no-ops when nothing changed.
-  @spec sync(Plug.Conn.t(), Oidc.Identity.t(), Accounts.User.t(), map()) ::
+  @spec sync(Plug.Conn.t(), Transaction.t(), Oidc.Identity.t(), Accounts.User.t(), map()) ::
           Plug.Conn.t() | {:error, oidc_error()}
-  defp sync(conn, linked, user, identity) do
+  defp sync(conn, txn, linked, user, identity) do
     with {:ok, user} <- sync_admin(user, identity),
          :ok <- sync_label(linked, identity) do
-      admit(conn, user)
+      admit(conn, txn, user)
     end
   end
 
@@ -318,6 +345,17 @@ defmodule GrappaWeb.OidcController do
         )
 
         {:ok, user}
+
+      # A changeset refusal on the flag write is the same posture as the
+      # last-admin arm: the login itself is good, only the sync failed,
+      # so the flag is RETAINED loudly rather than the round trip killed.
+      {:error, %Ecto.Changeset{} = changeset} ->
+        Logger.warning(
+          "oidc admin sync: #{user.name} flag update refused — is_admin retained " <>
+            "(#{inspect(changeset)})"
+        )
+
+        {:ok, user}
     end
   end
 
@@ -339,8 +377,9 @@ defmodule GrappaWeb.OidcController do
   # logging in — is what an unseen `sub` may be provisioned on. The
   # account is created passwordless and the link is written in the SAME
   # login, so the second login is the ordinary linked path above.
-  @spec provision(Plug.Conn.t(), map()) :: Plug.Conn.t() | {:error, oidc_error()}
-  defp provision(conn, identity) do
+  @spec provision(Plug.Conn.t(), Transaction.t(), map()) ::
+          Plug.Conn.t() | {:error, oidc_error()}
+  defp provision(conn, txn, identity) do
     config = Oidc.config()
 
     cond do
@@ -356,7 +395,7 @@ defmodule GrappaWeb.OidcController do
             with {:ok, user} <- Accounts.provision_user(attrs),
                  {:ok, _linked} <-
                    Oidc.link_identity(user.id, identity.issuer, identity.subject, identity.label) do
-              admit(conn, user)
+              admit(conn, txn, user)
             else
               {:error, :name_taken} -> {:error, :name_taken}
               {:error, :invalid_name} -> {:error, :invalid_name}
@@ -391,8 +430,9 @@ defmodule GrappaWeb.OidcController do
   end
 
   # The second-factor ladder, shared with `POST /auth/login`.
-  @spec admit(Plug.Conn.t(), Accounts.User.t()) :: Plug.Conn.t() | {:error, oidc_error()}
-  defp admit(conn, user) do
+  @spec admit(Plug.Conn.t(), Transaction.t(), Accounts.User.t()) ::
+          Plug.Conn.t() | {:error, oidc_error()}
+  defp admit(conn, txn, user) do
     case Accounts.Login.second_factor(user) do
       {:ok, user} ->
         with {:ok, session} <-
@@ -409,11 +449,18 @@ defmodule GrappaWeb.OidcController do
           %{token: token, subject: subject} =
             AuthJSON.login(%{token: session.id, subject: {:user, user}})
 
-          finish(conn, %{kind: "session", token: token, subject: subject})
+          finish(conn, %{kind: "session", token: token, subject: subject, bind: txn.binder})
+        else
+          # An expected domain refusal, not a crash: without this arm a
+          # changeset here walks out of the `with` as a WithClauseError
+          # and the human mid-login gets a 500.
+          {:error, %Ecto.Changeset{} = changeset} ->
+            Logger.warning("oidc login: session mint refused (#{inspect(changeset)})")
+            {:error, :session_mint_failed}
         end
 
       {:second_factor, _mode, user} ->
-        handoff(conn, user)
+        handoff(conn, txn, user)
 
       {:error, :passwordless} ->
         {:error, :second_factor_unsupported}
@@ -424,11 +471,19 @@ defmodule GrappaWeb.OidcController do
   # the ONE answer to "does this account have a TOTP or recovery code to
   # spend" — reused rather than copied, so a change to that question
   # cannot leave this door behind.
-  @spec handoff(Plug.Conn.t(), Accounts.User.t()) :: Plug.Conn.t() | {:error, oidc_error()}
-  defp handoff(conn, user) do
+  @spec handoff(Plug.Conn.t(), Transaction.t(), Accounts.User.t()) ::
+          Plug.Conn.t() | {:error, oidc_error()}
+  defp handoff(conn, txn, user) do
     case AuthController.second_factor_challenge(user, conn) do
-      nil -> {:error, :second_factor_unsupported}
-      challenge_token -> finish(conn, %{kind: "totp", challenge_token: challenge_token})
+      nil ->
+        {:error, :second_factor_unsupported}
+
+      challenge_token ->
+        # The binder rides on the totp landing too: it installs nothing
+        # by itself, but the SPA refuses ANY landing whose bind does not
+        # match the value it minted, so a crafted landing of either kind
+        # dies at the same gate.
+        finish(conn, %{kind: "totp", challenge_token: challenge_token, bind: txn.binder})
     end
   end
 
@@ -484,7 +539,7 @@ defmodule GrappaWeb.OidcController do
       user_id = subject_user_id(conn)
 
       with :ok <- check_throttle(format_ip(conn)),
-           %{id: txn_id, transaction: txn} <- Transaction.put(:link, user_id) do
+           %{id: txn_id, transaction: txn} <- Transaction.put(:link, user_id, nil) do
         state_token(format_ip(conn), conn.assigns[:current_client_id], txn_id)
         |> then(fn state ->
           Oidc.authorize_url(Oidc.config(), %{
@@ -527,14 +582,15 @@ defmodule GrappaWeb.OidcController do
 
   ## Round-trip plumbing
 
-  @spec start_transaction(Plug.Conn.t(), Transaction.intent(), Ecto.UUID.t() | nil) ::
+  @spec start_transaction(Plug.Conn.t(), Transaction.intent(), Ecto.UUID.t() | nil, String.t() | nil) ::
           Plug.Conn.t()
-  defp start_transaction(conn, intent, user_id) do
+  defp start_transaction(conn, intent, user_id, binder) do
     ip = format_ip(conn)
     client_id = conn.assigns[:current_client_id]
 
     with :ok <- check_throttle(ip),
-         %{id: txn_id, transaction: txn} <- Transaction.put(intent, user_id),
+         :ok <- check_binder(intent, binder),
+         %{id: txn_id, transaction: txn} <- Transaction.put(intent, user_id, binder),
          {:ok, url} <-
            Oidc.authorize_url(Oidc.config(), %{
              state: state_token(ip, client_id, txn_id),
@@ -549,8 +605,23 @@ defmodule GrappaWeb.OidcController do
 
       {:error, :too_many_attempts} ->
         finish(conn, %{kind: "error", code: "too_many_attempts"})
+
+      {:error, :invalid_request} ->
+        Logger.warning("oidc authorize: login navigation without the browser binder")
+        finish(conn, %{kind: "error", code: "invalid_request"})
     end
   end
+
+  # The binder shape check, `Transaction.put/3`'s own guard surfaced at
+  # the door: a `:login` navigation REQUIRES the browser-minted value
+  # (the landing it produces installs a session, and a landing whose
+  # binder the SPA cannot verify is one anyone could have forged), a
+  # `:link` round trip — started by an authenticated fetch whose landing
+  # installs nothing — requires NONE.
+  @spec check_binder(Transaction.intent(), String.t() | nil) :: :ok | {:error, :invalid_request}
+  defp check_binder(:login, binder) when is_binary(binder) and byte_size(binder) > 0, do: :ok
+  defp check_binder(:link, nil), do: :ok
+  defp check_binder(_, _), do: {:error, :invalid_request}
 
   @spec state_token(String.t() | nil, String.t() | nil, String.t()) :: String.t()
   defp state_token(ip, client_id, txn_id) do

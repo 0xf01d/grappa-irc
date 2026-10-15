@@ -21,6 +21,8 @@ defmodule Grappa.Auth.Oidc.Discovery do
 
   @moduledoc since: "1.6.0"
 
+  require Logger
+
   @typedoc "The subset of the discovery document this flow consumes."
   @type t :: %__MODULE__{
           issuer: String.t(),
@@ -76,22 +78,39 @@ defmodule Grappa.Auth.Oidc.Discovery do
   # house HTTP style (Grappa.Admission.Captcha.SiteVerifyHttp): `Req`
   # against the system CA store, a bounded timeout, transient retries —
   # a provider blip is the network being the network, not a login
-  # failure to charge anybody for.
+  # failure to charge anybody for. Every refusal here logs its cause at
+  # the boundary: the domain error the caller sees collapses four very
+  # different failures (DNS, TLS, HTTP status, shape) into one, and the
+  # log is the only place the difference survives.
   @spec get_document(String.t()) :: {:ok, map()} | {:error, :provider_unavailable}
   defp get_document(url) do
     case Req.get(url, receive_timeout: @http_timeout_ms, retry: :transient) do
-      {:ok, %Req.Response{status: 200, body: body}} when is_map(body) -> {:ok, body}
-      _ -> {:error, :provider_unavailable}
+      {:ok, %Req.Response{status: 200, body: body}} when is_map(body) ->
+        {:ok, body}
+
+      {:ok, %Req.Response{status: status}} ->
+        Logger.warning("oidc discovery: #{url} answered HTTP #{status}")
+        {:error, :provider_unavailable}
+
+      {:error, exception} ->
+        Logger.warning("oidc discovery: #{url} — #{Exception.format(:error, exception)}")
+        {:error, :provider_unavailable}
     end
   rescue
-    _ -> {:error, :provider_unavailable}
+    exception ->
+      Logger.warning("oidc discovery: #{url} — #{Exception.format(:error, exception)}")
+      {:error, :provider_unavailable}
   end
 
   @doc """
   Validates that the document describes the issuer we configured, then
-  projects the four fields the flow needs. An HTTPS endpoint is a hard
-  requirement: a bearer code and a client secret must not be handed to
-  a cleartext hop, whoever is operating it.
+  projects the four fields the flow needs. The HTTPS rule has two halves,
+  in two modules: the OPERATOR-SUPPLIED issuer is required to be `https`
+  where it is read (`Config.build/1` — a cleartext issuer is a cleartext
+  conversation before any endpoint check can run), and the three
+  PROVIDER-SUPPLIED endpoints are required to be `https` here
+  (`fetch_https/2`): a bearer code and a client secret must not be handed
+  to a cleartext hop, whoever is operating it.
   """
   @spec build(Grappa.Auth.Oidc.Config.t(), map()) :: {:ok, t()} | {:error, :provider_unavailable}
   def build(config, document) do
