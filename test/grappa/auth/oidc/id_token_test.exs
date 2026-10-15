@@ -59,6 +59,8 @@ defmodule Grappa.Auth.Oidc.IdTokenTest do
     )
   end
 
+  defp without(key), do: Map.delete(claims(%{}), key)
+
   # Installs a unique JWKS cache slot for this test and returns a
   # discovery struct pointing at it. Uniqueness (not just cleanup) keeps a
   # later test from inheriting an earlier one's keys.
@@ -81,14 +83,14 @@ defmodule Grappa.Auth.Oidc.IdTokenTest do
 
   # `JOSE.JWT.sign/3` hands back the flattened JWS representation; the
   # compact `a.b.c` serialization is its `protected.payload.signature`.
-  defp compact({_jwt, jws}) do
+  defp compact({_, jws}) do
     {_, compact} = JOSE.JWS.compact(jws)
     compact
   end
 
   defp none_token(override_claims) do
-    header = Base.url_encode64(Jason.encode!(%{"alg" => "none"}), padding: false)
-    payload = Base.url_encode64(Jason.encode!(claims(override_claims)), padding: false)
+    header = %{"alg" => "none"} |> Jason.encode!() |> Base.url_encode64(padding: false)
+    payload = override_claims |> claims() |> Jason.encode!() |> Base.url_encode64(padding: false)
     header <> "." <> payload <> "."
   end
 
@@ -127,8 +129,10 @@ defmodule Grappa.Auth.Oidc.IdTokenTest do
     test "a tampered payload leaves the signature invalid" do
       p = pair("k1")
       disc = with_keys([p.public])
-      [h, _payload, sig] = String.split(sign(p, %{}, %{}), ".")
-      forged_payload = Base.url_encode64(Jason.encode!(claims(%{"sub" => "attacker"})), padding: false)
+      [h, _, sig] = String.split(sign(p, %{}, %{}), ".")
+
+      forged_payload =
+        %{"sub" => "attacker"} |> claims() |> Jason.encode!() |> Base.url_encode64(padding: false)
 
       assert {:error, :invalid_token} =
                IdToken.verify(h <> "." <> forged_payload <> "." <> sig, config(), disc, @nonce, @now)
@@ -252,7 +256,7 @@ defmodule Grappa.Auth.Oidc.IdTokenTest do
 
     test "a missing issuer is refused" do
       assert {:error, :invalid_token} =
-               IdToken.verify_claims(Map.delete(claims(%{}), "iss"), config(), discovery("x"), @nonce, @now)
+               IdToken.verify_claims(without("iss"), config(), discovery("x"), @nonce, @now)
     end
 
     test "a wrong audience is refused" do
@@ -329,7 +333,7 @@ defmodule Grappa.Auth.Oidc.IdTokenTest do
     test "a missing exp is refused" do
       assert {:error, :invalid_token} =
                IdToken.verify_claims(
-                 Map.delete(claims(%{}), "exp"),
+                 without("exp"),
                  config(),
                  discovery("x"),
                  @nonce,
@@ -415,7 +419,7 @@ defmodule Grappa.Auth.Oidc.IdTokenTest do
     test "a missing nonce is refused" do
       assert {:error, :invalid_token} =
                IdToken.verify_claims(
-                 Map.delete(claims(%{}), "nonce"),
+                 without("nonce"),
                  config(),
                  discovery("x"),
                  @nonce,
@@ -431,7 +435,7 @@ defmodule Grappa.Auth.Oidc.IdTokenTest do
     test "a missing subject is refused" do
       assert {:error, :invalid_token} =
                IdToken.verify_claims(
-                 Map.delete(claims(%{}), "sub"),
+                 without("sub"),
                  config(),
                  discovery("x"),
                  @nonce,

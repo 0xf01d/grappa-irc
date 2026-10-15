@@ -102,7 +102,7 @@ defmodule Grappa.Auth.Oidc.TransactionTest do
       state = %{"a" => {txn, now + 300}, "b" => {txn, now + 300}}
 
       assert {:reply, :ok, next} = Transaction.handle_call({:put, "c", txn, now + 300}, nil, state)
-      assert Map.keys(next) |> Enum.sort() == ["a", "b", "c"]
+      assert Enum.sort(Map.keys(next)) == ["a", "b", "c"]
     end
 
     test "a put on a full store makes room and never exceeds the cap" do

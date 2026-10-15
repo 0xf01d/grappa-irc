@@ -115,7 +115,7 @@ defmodule Grappa.Auth.OidcTest do
 
       query = url |> URI.parse() |> Map.fetch!(:query) |> URI.decode_query()
 
-      assert url |> String.starts_with?(@issuer <> "/authorize?")
+      assert String.starts_with?(url, @issuer <> "/authorize?")
       assert query["redirect_uri"] == "https://app.example.com/auth/oidc/callback"
       assert query["code_challenge_method"] == "S256"
       assert query["code_challenge"] == "c"

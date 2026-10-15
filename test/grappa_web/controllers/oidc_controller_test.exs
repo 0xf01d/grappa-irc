@@ -88,10 +88,10 @@ defmodule GrappaWeb.OidcControllerTest do
     bypass = Bypass.open()
     key = JOSE.JWK.generate_key({:rsa, 2048})
     {_, public} = JOSE.JWK.to_public_map(key)
-    public = Map.put(public, "kid", "k1")
+    jwks_key = Map.put(public, "kid", "k1")
     jwks_uri = "https://idp.example.com/jwks/round-trip"
 
-    Jwks.put_test_keys(jwks_uri, [public])
+    Jwks.put_test_keys(jwks_uri, [jwks_key])
     on_exit(fn -> :persistent_term.erase({Jwks, jwks_uri}) end)
 
     Config.put_test_config(oidc_config(overrides))
@@ -239,7 +239,7 @@ defmodule GrappaWeb.OidcControllerTest do
 
     test "answers identity: nil when the account holds no link", %{conn: conn} do
       enable_oidc()
-      {_user, session} = user_and_session()
+      {_, session} = user_and_session()
 
       body = conn |> put_bearer(session.id) |> get("/me/oidc") |> json_response(200)
       assert body == %{"identity" => nil}
@@ -255,7 +255,7 @@ defmodule GrappaWeb.OidcControllerTest do
     end
 
     test "is a 404 when no provider is configured", %{conn: conn} do
-      {_user, session} = user_and_session()
+      {_, session} = user_and_session()
       assert conn |> put_bearer(session.id) |> get("/me/oidc") |> response(404)
     end
   end
@@ -263,7 +263,7 @@ defmodule GrappaWeb.OidcControllerTest do
   describe "POST /me/oidc/link" do
     test "requires the account password", %{conn: conn} do
       enable_oidc()
-      {_user, session} = user_and_session()
+      {_, session} = user_and_session()
 
       assert conn
              |> put_bearer(session.id)
@@ -273,7 +273,7 @@ defmodule GrappaWeb.OidcControllerTest do
 
     test "a wrong password is refused", %{conn: conn} do
       enable_oidc()
-      {_user, session} = user_and_session()
+      {_, session} = user_and_session()
 
       assert conn
              |> put_bearer(session.id)
@@ -283,7 +283,7 @@ defmodule GrappaWeb.OidcControllerTest do
 
     test "the right password mints a link round trip", %{conn: conn} do
       enable_oidc()
-      {_user, session} = user_and_session()
+      {_, session} = user_and_session()
 
       body =
         conn
@@ -298,7 +298,7 @@ defmodule GrappaWeb.OidcControllerTest do
   describe "DELETE /me/oidc" do
     test "requires the account password", %{conn: conn} do
       enable_oidc()
-      {_user, session} = user_and_session()
+      {_, session} = user_and_session()
 
       assert conn
              |> put_bearer(session.id)
@@ -308,7 +308,7 @@ defmodule GrappaWeb.OidcControllerTest do
 
     test "a wrong password is refused", %{conn: conn} do
       enable_oidc()
-      {_user, session} = user_and_session()
+      {_, session} = user_and_session()
 
       assert conn
              |> put_bearer(session.id)
@@ -333,7 +333,7 @@ defmodule GrappaWeb.OidcControllerTest do
 
     test "an account with no link gets 404", %{conn: conn} do
       enable_oidc()
-      {_user, session} = user_and_session()
+      {_, session} = user_and_session()
 
       assert conn
              |> put_bearer(session.id)
@@ -392,10 +392,10 @@ defmodule GrappaWeb.OidcControllerTest do
     end
 
     test "a token-endpoint refusal of the code is invalid_code", %{conn: conn} do
-      {bypass, _key} = enable_round_trip([])
+      {bypass, _} = enable_round_trip([])
       user = user_fixture()
       {:ok, _} = Oidc.link_identity(user.id, @issuer, "sub-1", "Alice")
-      {state, _nonce} = begin_login(conn)
+      {state, _} = begin_login(conn)
 
       Bypass.expect(bypass, "POST", "/token", fn conn ->
         conn
@@ -408,10 +408,10 @@ defmodule GrappaWeb.OidcControllerTest do
     end
 
     test "a broken token endpoint is a provider_unavailable", %{conn: conn} do
-      {bypass, _key} = enable_round_trip([])
+      {bypass, _} = enable_round_trip([])
       user = user_fixture()
       {:ok, _} = Oidc.link_identity(user.id, @issuer, "sub-1", "Alice")
-      {state, _nonce} = begin_login(conn)
+      {state, _} = begin_login(conn)
 
       Bypass.expect(bypass, "POST", "/token", fn conn -> Plug.Conn.resp(conn, 500, "boom") end)
 
@@ -555,7 +555,7 @@ defmodule GrappaWeb.OidcControllerTest do
       {bypass, key} = enable_round_trip([])
       owner = user_fixture()
       {:ok, _} = Oidc.link_identity(owner.id, @issuer, "sub-1", "Alice")
-      {_thief, session} = user_and_session()
+      {_, session} = user_and_session()
 
       authorize_url =
         conn
