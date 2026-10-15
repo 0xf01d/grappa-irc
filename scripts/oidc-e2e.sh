@@ -33,7 +33,17 @@
 #          401 on /me/oidc; the link door is idempotent (a second link
 #          round trip answers already_linked), and leaving grappa_admins
 #          closes the admin door again on the next login (the sync leg
-#          runs in both directions — docs/oidc-kanidm.md §3)
+#          runs in both directions — docs/oidc-kanidm.md §3). The same
+#          step's negative doors: a login navigation without the browser
+#          binder is refused {"kind":"error","code":"invalid_request"},
+#          and the credential-changing link/unlink door is password-gated
+#          (a wrong password is 401, an absent one is 400 — a stolen
+#          bearer cannot bolt on a provider identity)
+#   rename a Kanidm person rename keeps the SAME grappa account: the link
+#          is keyed on the `sub` UUID, not the name (docs/oidc-kanidm.md
+#          §5), so the renamed person's next login syncs the same oidc-ci
+#          account with the label refreshed and forks NO second account —
+#          the db leg's account set + identity count are the fork detector
 #   db     the store itself, read raw through the exqlite NIF (the same
 #          bundled SQLite the app runs, but no Repo/Ecto/grappa code in
 #          the path): users.password_hash nullable from a COLD
@@ -120,6 +130,9 @@ GRAPPA="http://localhost:$GPORT"
 # the #1911c gate legs: nobody links them and no password door ever saw
 # them, so the group claim is the ONLY thing that can speak for them.
 KUSER=oidc-person
+# The rename leg changes KUSER's provider-side name; the `sub` UUID and
+# so the linked account do not move (docs/oidc-kanidm.md §5).
+KUSER_RENAMED=oidc-person-renamed
 NEWUSER=oidc-newcomer
 OUTUSER=oidc-outsider
 UGROUP=grappa_users
@@ -795,6 +808,33 @@ GCODE=$(curl -s -o /dev/null -w '%{http_code}' \
 [ "$GCODE" = "401" ] \
     || die "hardening: garbage bearer answered $GCODE on /me/oidc (want 401)"
 
+# A login navigation must carry the browser binder (the login-CSRF cure):
+# without it the door refuses to mint a landing anyone could have forged.
+$FLOW -o /dev/null -D runtime/hdr-nobind "$GRAPPA/auth/oidc/authorize"
+FRAG=$(grep -i '^location' runtime/hdr-nobind | tr -d '\r' | awk '{print $2}' | sed 's|^/login#oidc=||' || true)
+[ "$(frag kind)" = "error" ] && [ "$(frag code)" = "invalid_request" ] \
+    || die "hardening: binder-less navigation got kind '$(frag kind)' code '$(frag code)' (want error/invalid_request)"
+
+# The credential-changing link/unlink door is password-gated: a stolen
+# bearer must not bolt a provider identity onto the account (the link
+# outlives every session the thief's token could be revoked from). A
+# wrong password is 401 and an absent one is 400 — neither reaches the
+# provider, and neither mutates the link.
+LCODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$GRAPPA/me/oidc/link" \
+    -H "Authorization: Bearer $GTOK" -H 'Content-Type: application/json' \
+    -d '{"password":"not-the-password"}')
+[ "$LCODE" = "401" ] \
+    || die "hardening: wrong-password link answered $LCODE (want 401)"
+LCODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$GRAPPA/me/oidc/link" \
+    -H "Authorization: Bearer $GTOK" -H 'Content-Type: application/json' -d '{}')
+[ "$LCODE" = "400" ] \
+    || die "hardening: password-less link answered $LCODE (want 400)"
+UCODE=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$GRAPPA/me/oidc" \
+    -H "Authorization: Bearer $GTOK" -H 'Content-Type: application/json' \
+    -d '{"password":"not-the-password"}')
+[ "$UCODE" = "401" ] \
+    || die "hardening: wrong-password unlink answered $UCODE (want 401)"
+
 # A SECOND link round trip for the same (account, person) pair is refused
 # by name — the link door may be retried, never duplicated.
 AURL="$($KURL -X POST "$GRAPPA/me/oidc/link" \
@@ -894,6 +934,44 @@ RCODE=$(curl -s -o /dev/null -w '%{http_code}' \
 # this leg does — a mirror assertion, not a check.
 $COMPOSE logs grappa 2>&1 | grep -q "$NEWUSER left $AGROUP but is the last admin" \
     || die "retention: no last-admin warning for $NEWUSER in grappa's logs — the retention was silent"
+
+# ---------------------------------------------------------------------------
+step "rename stability: a Kanidm rename keeps the SAME account (#1911)"
+# docs/oidc-kanidm.md §5: the link is keyed on the `sub` UUID, never the
+# name, so renaming the linked person resolves to the SAME grappa account
+# (oidc-ci) with the label refreshed — not a second account provisioned
+# for the new name, which is what a name-keyed door would do and which
+# KUSER's grappa_users membership would let it silently succeed at. The
+# db leg below pins the account set + identity count that would catch a
+# fork; the admin listing here names it at the HTTP layer.
+# Fresh CLI login, like every late leg: the run is minutes old by now and
+# an expired idm_admin token prompts for a password on a dead tty.
+PW=$(docker exec grappa-oidc-kanidm /sbin/kanidmd recover-account \
+    -c /etc/kanidm/server.toml idm_admin 2>&1 | grep -oE '[0-9a-z]{48}' | head -1 || true)
+[ -n "$PW" ] || die "rename: no recovery password for the idm_admin re-login"
+KANIDM_PASSWORD="$PW" kcli login -D idm_admin >/dev/null 2>&1 \
+    || die "rename: idm_admin re-login failed"
+# --newname (the rename), NOT --name: the latter is the CLI's login
+# identity option (the `-D idm_admin` twin), so `person update --name new`
+# would rename the command's OWN authentication and leave $KUSER as is.
+kcli person update "$KUSER" --newname "$KUSER_RENAMED" -D idm_admin >/dev/null \
+    || die "rename: renaming $KUSER to $KUSER_RENAMED failed"
+# The TOTP secret lives on the person UUID, so the credential survives the
+# rename; the wizard leg keys its file on the name it logs in as.
+cp "runtime/$KUSER.totp.json" "runtime/$KUSER_RENAMED.totp.json"
+login_leg "$KUSER_RENAMED"
+[ "$(frag kind)" = "session" ] \
+    || die "rename: renamed person got kind '$(frag kind)' code '$(frag code)' (want session)"
+RTOK="$(frag token)"
+[ -n "$RTOK" ] || die "rename: no token on the renamed login"
+# The label is refreshed to the new name — the account behind it is the old
+# one, and no account named for the new name exists.
+$KURL "$GRAPPA/me/oidc" -H "Authorization: Bearer $RTOK" \
+    | grep -q "\"label\":\"$KUSER_RENAMED\"" \
+    || die "rename: label not refreshed to $KUSER_RENAMED"
+$KURL "$GRAPPA/admin/users" -H "Authorization: Bearer $NTOK" \
+    | python3 -c 'import json,sys;names=[u["name"] for u in json.load(sys.stdin)["users"]];assert "oidc-ci" in names, names;assert sys.argv[1] not in names, names' "$KUSER_RENAMED" \
+    || die "rename: the rename forked a second account instead of syncing oidc-ci"
 
 # ---------------------------------------------------------------------------
 step "database: what the legs leave behind (#1911c)"
