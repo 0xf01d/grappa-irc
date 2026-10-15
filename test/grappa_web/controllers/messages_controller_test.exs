@@ -166,6 +166,19 @@ defmodule GrappaWeb.MessagesControllerTest do
     assert Enum.at(body, 1)["body"] == "m1"
   end
 
+  # Issue 2424 — after a raw `/quote join #` the window appeared and every
+  # follow-up read answered 400: `%23` decodes to a bare `#`, which the
+  # shape check refused. The seed is the persistence half of the same
+  # defect — `Message.changeset/2` keys its target off the same predicate.
+  test "GET on the bare-sigil channel # returns its scrollback (issue 2424)",
+       %{conn: conn, user: user, network: network} do
+    seed(user, network, "#")
+    conn = get(conn, "/networks/azzurra/channels/%23/messages")
+    body = json_response(conn, 200)
+    assert length(body) == 5
+    assert Enum.all?(body, &(&1["channel"] == "#"))
+  end
+
   test "limit defaults to 50 when omitted",
        %{conn: conn, user: user, network: network} do
     seed(user, network)
