@@ -26,7 +26,8 @@ defmodule GrappaWeb.Validation do
 
   @doc """
   Returns `:ok` if `name` is a syntactically valid IRC channel name
-  (`#`/`&`/`+`/`!` sigil + chanstring per RFC 2812 §1.3), else
+  (`#`/`&`/`+`/`!` sigil per RFC 2812 §1.3 — a lone `#` or `&` is a whole
+  name, issue 2424; `Identifier.valid_channel?/1` owns the rule), else
   `{:error, :bad_request}`.
   """
   @spec validate_channel_name(String.t()) :: :ok | {:error, :bad_request}
