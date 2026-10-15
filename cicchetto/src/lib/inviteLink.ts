@@ -52,6 +52,11 @@ import { createToastQueue } from "./toasts";
 // wrong: the room segment was the one URL component never encoded.
 const CHANTYPES = "#&+!";
 
+// The sigils that may stand alone as a WHOLE channel name — the server's rule
+// in `Identifier.valid_channel?/1` (issue 2424). A lone `#` or `&` is an
+// ordinary channel upstream; a lone `+` or `!` names nothing.
+const LONE_CHANNEL_SIGILS = "#&";
+
 // Bytes RFC 2812 forbids inside a channel name, rejected rather than escaped.
 // The comma is the one that matters: JOIN takes a comma-separated LIST, so an
 // unfiltered `?go=azzurra/sniffo,bofh` would turn one invite into a
@@ -119,8 +124,8 @@ export function parseInviteLinkUrl(rawUrl: string): PushTarget | null {
   if (hasForbiddenChannelByte(channel)) return null;
 
   const channelName = CHANTYPES.includes(channel.charAt(0)) ? channel : `#${channel}`;
-  // A bare sigil names nothing.
-  if (channelName.length < 2) return null;
+  // A one-char name can only be a sigil (a bare segment got `#` prepended).
+  if (channelName.length === 1 && !LONE_CHANNEL_SIGILS.includes(channelName)) return null;
 
   return { networkSlug, channelName, kind: "channel" };
 }
