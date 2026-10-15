@@ -2367,8 +2367,9 @@ already running keeps its old code until it ends.
 `Identifier.valid_channel?/1` demanded at least one byte after the sigil. The
 ircd disagrees: bahamut's `IsChannelName` (azzurra/bahamut `include/struct.h`,
 read at `94650287`) is `*name == '#' || *name == '&'` — the first byte and
-nothing else — and `m_join` asks no more of the name than that plus the
-forbidden-byte scan. So a lone `#` is an ordinary, joinable channel, and the
+nothing else — and nothing else `m_join` does to the name (the forbidden-byte
+scan, the `CHANNELLEN` truncation) refuses a lone sigil. So a lone `#` is an
+ordinary, joinable channel, and the
 predicate was the one place inventing a rule. Every door is built on it, so a
 raw `/quote join #` that got past the JOIN body then met the same refusal on
 every per-channel read of the window it opened: the reported "loop of
@@ -2392,6 +2393,17 @@ already said yes to `#`, so the STATUSMSG peel turned `@#` into `#` before this
 change and the validation behind it now agrees. cic's `linkify` keeps a stray
 `#` in prose as text: it is a mention heuristic, not a validator, and #648/#730
 are about exactly that.
+
+**Known limitation, kept on purpose: `/topic #` still means "this window".**
+cic's `/topic` parser treats a lone `#` (and `# <text>`) as the escape for the
+CURRENT channel, so a body can start with `#hashtag` (`/topic # #urgent …`).
+Now that `#` is a joinable channel, that escape shadows it: from any OTHER
+window, `/topic #` shows, and `/topic # hello` SETS, the focused channel's
+topic, not `#`'s. Inside the `#` window the two readings coincide. Narrowing the
+escape would take away the only way to start a topic with a sigil, for a
+channel name that is rare. It is not this slice's call to make. The workaround
+is to focus `#` and type `/topic …` there. The escape is pinned by the existing
+`/topic # <body that starts with #>` tests in `slashCommands.test.ts`.
 
 **Not in this slice:** the issue's second ask, that a malformed channel get the
 `invalid_channel` copy instead of the generic "malformed". `invalid_channel` is
