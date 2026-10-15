@@ -68,6 +68,30 @@ defmodule GrappaWeb.ChannelsControllerTest do
       :ok = GenServer.stop(pid, :normal, 1_000)
     end
 
+    # Issue 2424 — `/join #` was refused as "The request was malformed."
+    # while the ircd takes a bare `#` (and `&`) as an ordinary channel.
+    test "a bare # or & name sends JOIN upstream and returns 202 (issue 2424)",
+         %{conn: conn, vjt: vjt} do
+      {server, port} = IRCServer.start_server(IRCServer.passthrough_handler())
+      network = setup_network(vjt, port)
+      pid = start_session_for(vjt, network)
+      :ok = IRCServer.await_handshake(server, 1_000)
+
+      for name <- ["#", "&"] do
+        line = "JOIN #{name}\r\n"
+
+        conn =
+          conn
+          |> put_req_header("content-type", "application/json")
+          |> post("/networks/#{network.slug}/channels", %{"name" => name})
+
+        assert json_response(conn, 202) == %{"ok" => true}
+        assert {:ok, ^line} = IRCServer.wait_for_line(server, &(&1 == line), 1_000)
+      end
+
+      :ok = GenServer.stop(pid, :normal, 1_000)
+    end
+
     test "#382 comma-list name sends ONE multi-target JOIN and returns 202",
          %{conn: conn, vjt: vjt} do
       {server, port} = IRCServer.start_server(IRCServer.passthrough_handler())

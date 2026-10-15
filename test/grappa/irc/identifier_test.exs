@@ -208,10 +208,56 @@ defmodule Grappa.IRC.IdentifierTest do
       refute Identifier.valid_channel?("#with\x07bell")
     end
 
-    test "rejects empty / nil / lone prefix" do
+    test "rejects empty / nil" do
       refute Identifier.valid_channel?("")
       refute Identifier.valid_channel?(nil)
-      refute Identifier.valid_channel?("#")
+    end
+
+    # Issue 2424 — `/join #` answered "The request was malformed." while the
+    # ircd takes `#` as an ordinary channel: bahamut's `IsChannelName` reads
+    # the first byte only (`*name == '#' || *name == '&'`) and `m_join` asks
+    # nothing more of the name.
+    test "accepts a lone # or & — both are ordinary channels upstream (issue 2424)" do
+      assert Identifier.valid_channel?("#")
+      assert Identifier.valid_channel?("&")
+    end
+
+    # The issue measured `#` only. bahamut has no `+`/`!` channels at all,
+    # and RFC 2812 gives `!` a mandatory 5-char channel id, so nothing
+    # argues for a bare `+` or `!` yet — they keep needing a body byte.
+    test "still rejects a lone + or ! — no evidence either stands alone" do
+      refute Identifier.valid_channel?("+")
+      refute Identifier.valid_channel?("!")
+    end
+
+    test "caps the name at 50 bytes including the sigil, for every sigil" do
+      for sigil <- ["#", "&", "+", "!"] do
+        assert Identifier.valid_channel?(sigil <> String.duplicate("a", 49))
+        refute Identifier.valid_channel?(sigil <> String.duplicate("a", 50))
+      end
+    end
+
+    # Printable ASCII minus space and comma: every byte here is legal in a
+    # channel body, so the properties below test the LENGTH rule per sigil,
+    # never the charset one.
+    @channel_body_chars [?!..?+, ?-..?~]
+
+    property "a # or & followed by 0..49 legal body bytes is a valid channel" do
+      check all(
+              sigil <- StreamData.member_of(["#", "&"]),
+              body <- StreamData.string(@channel_body_chars, max_length: 49)
+            ) do
+        assert Identifier.valid_channel?(sigil <> body)
+      end
+    end
+
+    property "a + or ! is a valid channel with 1..49 body bytes and never alone" do
+      check all(
+              sigil <- StreamData.member_of(["+", "!"]),
+              body <- StreamData.string(@channel_body_chars, max_length: 49)
+            ) do
+        assert Identifier.valid_channel?(sigil <> body) == (body != "")
+      end
     end
   end
 
