@@ -286,9 +286,16 @@ defmodule Grappa.Auth.Oidc do
     # the log: an operator diagnosing "provider unavailable" needs to know
     # WHICH, and a silent rescue here is the CLAUDE.md silent-swallow.
     exception ->
-      Logger.warning("oidc token endpoint: #{Exception.format(:error, exception)}")
+      Logger.warning("oidc token endpoint: #{one_line(Exception.format(:error, exception))}")
       {:error, :provider_unavailable}
   end
+
+  # The token endpoint's URL is the provider's own text (it came from the
+  # discovery document), and a log line is newline-delimited: a crafted
+  # endpoint must not be able to write believable lines of its own. Same
+  # cure as the controller's `inspect/1` on the provider `error` parameter.
+  @spec one_line(String.t()) :: String.t()
+  defp one_line(text), do: String.replace(text, ["\r\n", "\n", "\r"], " ")
 
   # The catch-all above is the one arm that has nothing of its own to say;
   # it still says what it observed rather than nothing.

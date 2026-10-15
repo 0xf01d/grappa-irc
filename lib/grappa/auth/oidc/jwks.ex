@@ -101,18 +101,25 @@ defmodule Grappa.Auth.Oidc.Jwks do
         {:ok, body}
 
       {:ok, %Req.Response{status: status}} ->
-        Logger.warning("oidc jwks: #{url} answered HTTP #{status}")
+        Logger.warning("oidc jwks: #{one_line(url)} answered HTTP #{status}")
         {:error, :provider_unavailable}
 
       {:error, exception} ->
-        Logger.warning("oidc jwks: #{url} — #{Exception.format(:error, exception)}")
+        Logger.warning("oidc jwks: #{one_line(url)} — #{one_line(Exception.format(:error, exception))}")
         {:error, :provider_unavailable}
     end
   rescue
     exception ->
-      Logger.warning("oidc jwks: #{url} — #{Exception.format(:error, exception)}")
+      Logger.warning("oidc jwks: #{one_line(url)} — #{one_line(Exception.format(:error, exception))}")
       {:error, :provider_unavailable}
   end
+
+  # The `jwks_uri` is the provider's own text, and a log line is
+  # newline-delimited: a crafted URL must not be able to write believable
+  # lines of its own. Same cure as the controller's `inspect/1` on the
+  # provider `error` parameter.
+  @spec one_line(String.t()) :: String.t()
+  defp one_line(text), do: String.replace(text, ["\r\n", "\n", "\r"], " ")
 
   if Mix.env() == :test do
     @doc false
