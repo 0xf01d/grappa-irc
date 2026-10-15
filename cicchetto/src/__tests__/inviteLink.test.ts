@@ -152,8 +152,21 @@ describe("parseInviteLinkUrl", () => {
     expect(parseInviteLinkUrl("/?go=azzurra/%ZZ")?.channelName).toBe("#%ZZ");
   });
 
-  it("rejects a bare sigil with no name", () => {
-    expect(parseInviteLinkUrl("/?go=azzurra/%23")).toBeNull();
+  // Issue 2424 — a lone `#` or `&` is an ordinary channel upstream, and the
+  // server's `Identifier.valid_channel?/1` now says so. An invite to one used
+  // to be thrown away here as "a bare sigil names nothing".
+  it("takes a lone # or & as the channel it names (issue 2424)", () => {
+    expect(parseInviteLinkUrl("/?go=azzurra/%23")).toEqual({
+      networkSlug: "azzurra",
+      channelName: "#",
+      kind: "channel",
+    });
+    expect(parseInviteLinkUrl("/?go=azzurra/%26")?.channelName).toBe("&");
+  });
+
+  it("rejects a lone + or !, which names no channel", () => {
+    expect(parseInviteLinkUrl("/?go=azzurra/%2B")).toBeNull();
+    expect(parseInviteLinkUrl("/?go=azzurra/!")).toBeNull();
   });
 });
 
